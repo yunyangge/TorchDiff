@@ -25,7 +25,7 @@ from ultrai2v.schedulers import schedulers
 
 from ultrai2v.distributed.checkpoint import Checkpointer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
-from ultrai2v.utils.utils import str_to_precision
+from ultrai2v.utils.utils import str_to_precision, params_nums_to_str
 
 
 
@@ -81,25 +81,25 @@ def main(config):
     # init model
     log_on_main_process(logger, "Initializing VAE model...")
     vae = WanVAE(
-        vae_path=vae_config.get("vae_path", None),
+        vae_pth=vae_config.get("vae_path", None),
         dtype=str_to_precision(vae_config.get("dtype", "fp32")),
-        device=torch.device("cpu")
+        device=device # for vae, we do not use fsdp
     )
 
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
         dtype=text_encoder_config.get("dtype", weight_dtype),
-        device=torch.device("cpu"),
+        device=device, # when no fsdp, we init the text_encoder on gpu
         checkpoint_path=text_encoder_config.get("checkpoint_path", None),
-        use_fsdp=text_encoder_config.get("use_fsdp", False)
+        use_fsdp=text_encoder_config.get("use_fsdp", False) # when using fsdp, we init the text_encoder on cpu, and use fsdp to shard the model to gpu
     )
 
-    vae.to(device)
-    if not text_encoder_config.get("use_fsdp", False):
-        text_encoder.to(device)
-    vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
+    # vae.to(device)
+    # if not text_encoder_config.get("use_fsdp", False):
+    #     text_encoder.to(device)
+    # vae.requires_grad_(False) # in vae
+    # text_encoder.requires_grad_(False) # in text_encoder
 
     log_on_main_process(logger, "Initializing diffusion model and scheduler...")
 
@@ -110,8 +110,6 @@ def main(config):
         model = models[model_name].from_pretrained(checkpoint_dir)
     else:
         model = models[model_name](**model_config)
-
-    log_on_main_process(logger, f"Model has {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters")
 
     FSDP2_mix_warpper(
         model,
@@ -139,9 +137,16 @@ def main(config):
         checkpointer.load_model(load_ema_model, ema=True)
         ema_model.model_copy_to_ema(load_ema_model)
         
-    optimizer = torch.optim.AdamW(model.parameters(), **optimizer_config)
+    log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        optimizer_config.get("lr", 1e-4),
+        betas=optimizer_config.get("betas", (0.9, 0.999)),
+        weight_decay=optimizer_config.get("weight_decay", 1e-2),
+        eps=optimizer_config.get("eps", 1e-15),
+    )
+
     if checkpointer.last_training_iteration is not None:
-        log_on_main_process(logger, "Loading optimizer checkpoint...")
         checkpointer.load_optim(model, optimizer)
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
 
@@ -157,7 +162,7 @@ def main(config):
         consumed_samples=current_iteration * batch_size * gradient_accumulation_steps,
         drop_last=data_config.get("drop_last", True),
     )
-    collator = ultra_collators[data_config.pop("collator_name", "t2v_collator")](**data_config.get("collator_config", {}))
+    collator = ultra_collators[data_config.pop("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
     dataloader = DataLoader(
         dataset,
         batch_size=data_config.get("batch_size", 1),
@@ -172,6 +177,11 @@ def main(config):
     current_batch_nums = current_iteration * gradient_accumulation_steps
     start_training_logs = f"""
     =============================Start Training=============================
+    Before FSDP sharding,
+    Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    After FSDP sharding,
+    Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    world_size: {world_size} GPUs
     Training iterations: {training_iteration}
     Current iteration: {current_iteration}
     Batch size per GPU: {batch_size}
@@ -194,7 +204,7 @@ def main(config):
                 text_embeddings = text_encoder(prompt_ids, prompt_mask)
 
             q_sample_results = scheduler.q_sample(latents, sigmas=None, prior_dist=None)
-            interpolated_latents = q_sample_results["interpolated_latents"]
+            interpolated_latents = q_sample_results["x_t"]
             prior_dist = q_sample_results["prior_dist"]
             sigmas = q_sample_results["sigmas"]
             timesteps = q_sample_results["timesteps"]

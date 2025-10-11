@@ -1,6 +1,7 @@
 from typing import Iterator, Optional
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
+import logging
 
 class StatefulDistributedSampler(DistributedSampler):
     def __init__(
@@ -21,7 +22,7 @@ class StatefulDistributedSampler(DistributedSampler):
             if self.num_samples > 0 else 0
         )
         self.start_index = self.consumed_samples % self.num_samples
-        print(f'In StatefulDistributedSampler, num_samples: {self.num_samples} * num_replicas: {self.num_replicas}, '   
+        logging.info(f'In StatefulDistributedSampler, num_samples: {self.num_samples} * num_replicas: {self.num_replicas}, '   
                 f'epoch: {self.epoch}, consumed_samples: {self.consumed_samples}, start_index: {self.start_index}')
 
 
@@ -29,7 +30,7 @@ class StatefulDistributedSampler(DistributedSampler):
         iterator = super().__iter__()
         indices = list(iterator)
         indices = indices[self.start_index:]
-        print(f'In StatefulDistributedSampler, first index for sampler: {indices[0]}')
+        logging.info(f'In StatefulDistributedSampler, first index for sampler: {indices[0]}')
         actual_indices_len = len(indices)
         self.consumed_samples += actual_indices_len
         self.epoch += 1

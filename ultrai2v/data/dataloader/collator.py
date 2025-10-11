@@ -17,5 +17,5 @@ class WanDataCollator:
         }
 
 data_collator = {
-    'wan': WanDataCollator
+    'wan_t2v': WanDataCollator
 }

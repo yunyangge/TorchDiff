@@ -9,3 +9,13 @@ def str_to_precision(s):
         return torch.float32
     else:
         raise ValueError(f"Unsupported precision string: {s}")
+
+def params_nums_to_str(params_num):
+    if params_num >= 1e9:
+        return f"{params_num / 1e9:.2f}B"
+    elif params_num >= 1e6:
+        return f"{params_num / 1e6:.2f}M"
+    elif params_num >= 1e3:
+        return f"{params_num / 1e3:.2f}K"
+    else:
+        return str(params_num)

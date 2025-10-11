@@ -39,10 +39,10 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["wan"]
+packages = ["ultrai2v"]
 
 [tool.setuptools.package-data]
-"wan" = ["**/*.py"]
+"ultrai2v" = ["**/*.py"]
 
 [tool.black]
 line-length = 88

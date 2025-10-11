@@ -646,10 +646,10 @@ class WanVAE:
 
     def encode(self, videos):
         # videos: [B C T H W], range [-1, 1]
-        with torch.autocast(dtype=self.dtype):
+        with torch.autocast("cuda", dtype=self.dtype):
             return self.model.encode(videos, self.scale).float()
 
     def decode(self, zs):
         # zs: [B C T H W]
-        with torch.autocast(dtype=self.dtype):
+        with torch.autocast("cuda", dtype=self.dtype):
             return self.model.decode(zs, self.scale).float().clamp_(-1, 1)

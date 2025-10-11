@@ -489,16 +489,18 @@ class T5EncoderModel:
             encoder_only=True,
             return_tokenizer=False,
             dtype=dtype,
-            device=device).eval().requires_grad_(False)
+            device=torch.device("cpu")).eval().requires_grad_(False)
         logging.info(f'loading text encoder from {checkpoint_path}')
         model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
-        self.model = model
         if use_fsdp:
             from torch.distributed.fsdp import fully_shard
-            for module in self.model.modules():
+            for module in model.modules():
                 if isinstance(module, T5SelfAttention):
                     fully_shard(module)
-            fully_shard(self.model)
+            fully_shard(model)
+        else:
+            model = model.to(device)
+        self.model = model
 
 
     def __call__(self, ids, mask):

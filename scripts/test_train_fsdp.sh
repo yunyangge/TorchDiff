@@ -25,4 +25,4 @@ torchrun \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
   train/train_fsdp.py \
-  configs/train/test_train_fsdp.yaml
+  --config configs/train/test_train_fsdp.yaml

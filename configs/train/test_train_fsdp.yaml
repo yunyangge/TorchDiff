@@ -46,10 +46,8 @@ data_config:
     tokenizer_max_length: 512
     return_prompt_mask: True
   sampler_name: "stateful_distributed"
-  collator_name: "t2v_collator"
+  collator_name: "wan_t2v"
   
 optimizer_config:
-  lr: 1e-4
-  betas: [0.9, 0.999]
-  weight_decay: 1e-2
-  eps: 1e-15
+  lr: 0.0001
+  weight_decay: 0.01

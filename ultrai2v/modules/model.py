@@ -29,7 +29,7 @@ def sinusoidal_embedding_1d(dim, position):
     return x
 
 
-@torch.autocast(enabled=False)
+@torch.autocast("cuda", enabled=False)
 def rope_params(max_seq_len, dim, theta=10000):
     assert dim % 2 == 0
     freqs = torch.outer(
@@ -40,7 +40,7 @@ def rope_params(max_seq_len, dim, theta=10000):
     return freqs
 
 
-@torch.autocast(enabled=False)
+@torch.autocast("cuda", enabled=False)
 def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
 
@@ -244,7 +244,7 @@ class WanAttentionBlock(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         assert e.dtype == torch.float32
-        with torch.autocast(dtype=torch.float32):
+        with torch.autocast("cuda", dtype=torch.float32):
             e = (self.modulation + e).chunk(6, dim=1)
         assert e[0].dtype == torch.float32
 
@@ -252,14 +252,13 @@ class WanAttentionBlock(nn.Module):
         y = self.self_attn(
             self.norm1(x).float() * (1 + e[1]) + e[0], seq_lens, grid_sizes, freqs
         )
-        with torch.autocast(dtype=torch.float32):
-            x = x + y * e[2]
+        x = x + y * e[2]
 
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
             y = self.ffn(self.norm2(x).float() * (1 + e[4]) + e[3])
-            with torch.autocast(dtype=torch.float32):
+            with torch.autocast("cuda", dtype=torch.float32):
                 x = x + y * e[5]
             return x
 
@@ -291,7 +290,7 @@ class Head(nn.Module):
             e(Tensor): Shape [B, C]
         """
         assert e.dtype == torch.float32
-        with torch.autocast(dtype=torch.float32):
+        with torch.autocast("cuda", dtype=torch.float32):
             e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
             x = self.head(self.norm(x) * (1 + e[1]) + e[0])
         return x
@@ -400,11 +399,9 @@ class WanModel(ModelMixin, ConfigMixin):
         self.time_projection = nn.Sequential(nn.SiLU(), nn.Linear(dim, dim * 6))
 
         # blocks
-        cross_attn_type = "t2v_cross_attn"
         self.blocks = nn.ModuleList(
             [
                 WanAttentionBlock(
-                    cross_attn_type,
                     dim,
                     ffn_dim,
                     num_heads,
@@ -451,14 +448,14 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.patch_embedding(x)
 
         # time embeddings
-        with torch.autocast(dtype=torch.float32):
+        with torch.autocast("cuda", dtype=torch.float32):
             e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
             e0 = self.time_projection(e).unflatten(1, (6, self.dim))
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         x, grid_sizes = self.patchify(x)
-        seq_lens = torch.tensor([x.shape[1] for _ in x.shape[0]])
-        grad_sizes = torch.stack([grad_sizes for _ in x.shape[0]])
+        seq_lens = torch.tensor(math.prod(grid_sizes), dtype=torch.long, device=device).repeat(x.size(0))
+        grid_size_for_rope = torch.tensor(grid_sizes, dtype=torch.long, device=device).unsqueeze(0).repeat(x.size(0), 1)
         # context
         context_lens = None
 
@@ -466,20 +463,21 @@ class WanModel(ModelMixin, ConfigMixin):
         kwargs = dict(
             e=e0,
             seq_lens=seq_lens,
-            grid_sizes=grid_sizes,
+            grid_sizes=grid_size_for_rope,
             freqs=self.freqs,
             context=context,
             context_lens=context_lens,
         )
 
-        for block in self.blocks:
+        for idx, block in enumerate(self.blocks):
+            print(f"Block {idx}")
             x = block(x, **kwargs)
 
         # head
         x = self.head(x, e)
 
         # unpatchify
-        x = self.unpatchify(x, grid_sizes)
+        x = self.unpatchify(x, *grid_sizes)
         return x.float()
 
     def patchify(self, embs):
@@ -542,3 +540,13 @@ wan_model_main_block = {
 wan_model_blocks_to_float = {
     "wan_t2v": [WanLayerNorm, WanRMSNorm]
 }
+
+if __name__ == "__main__":
+    device = "cuda:0"
+    dtype = torch.float16
+    model = WanModel().to(device=device, dtype=dtype)
+    x = torch.randn(2, 16, 16, 64, 64, device=device, dtype=dtype)
+    t = torch.randint(0, 1000, (2,), device=device)
+    context = torch.randn(2, 512, 4096, device=device, dtype=dtype)
+    y = model(x, t, context)
+    print(y.shape)

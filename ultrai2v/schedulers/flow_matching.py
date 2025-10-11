@@ -1,5 +1,6 @@
 
 from typing import Optional
+import logging
 
 import math
 import torch
@@ -27,7 +28,7 @@ class FlowMatchingScheduler:
         self.use_logitnorm_time_sampling = use_logitnorm_time_sampling
 
         if self.use_dynamic_shifting:
-            print('[INFO] In FlowMatchingScheduler, use dynamic shifting.')
+            logging.info('In FlowMatchingScheduler, use dynamic shifting.')
             self.base_image_seq = kwargs.pop("base_image_seq", 256)
             self.max_image_seq = kwargs.pop("max_image_seq", 4096)
             self.base_shift = kwargs.pop("base_shift", 0.5)
@@ -36,7 +37,7 @@ class FlowMatchingScheduler:
             self.shift_b = self.base_shift - self.shift_k * self.base_image_seq
 
         if self.use_logitnorm_time_sampling:
-            print('[INFO] In FlowMatchingScheduler, use logitnorm time sampling.')
+            logging.info('In FlowMatchingScheduler, use logitnorm time sampling.')
             self.logit_mean = kwargs.pop("logit_mean", 0.0)
             self.logit_std = kwargs.pop("logit_std", 1.0)
         

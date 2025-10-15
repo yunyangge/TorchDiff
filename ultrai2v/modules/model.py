@@ -243,23 +243,19 @@ class WanAttentionBlock(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
-        assert e.dtype == torch.float32
-        with torch.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation + e).chunk(6, dim=1)
-        assert e[0].dtype == torch.float32
+        e = (self.modulation + e).chunk(6, dim=1)
 
         # self-attention
         y = self.self_attn(
-            self.norm1(x).float() * (1 + e[1]) + e[0], seq_lens, grid_sizes, freqs
+            self.norm1(x) * (1 + e[1]) + e[0], seq_lens, grid_sizes, freqs
         )
         x = x + y * e[2]
 
         # cross-attention & ffn function
         def cross_attn_ffn(x, context, context_lens, e):
             x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(self.norm2(x).float() * (1 + e[4]) + e[3])
-            with torch.autocast("cuda", dtype=torch.float32):
-                x = x + y * e[5]
+            y = self.ffn(self.norm2(x) * (1 + e[4]) + e[3])
+            x = x + y * e[5]
             return x
 
         x = cross_attn_ffn(x, context, context_lens, e)
@@ -289,10 +285,8 @@ class Head(nn.Module):
             x(Tensor): Shape [B, L1, C]
             e(Tensor): Shape [B, C]
         """
-        assert e.dtype == torch.float32
-        with torch.autocast("cuda", dtype=torch.float32):
-            e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
-            x = self.head(self.norm(x) * (1 + e[1]) + e[0])
+        e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
+        x = self.head(self.norm(x) * (1 + e[1]) + e[0])
         return x
 
 
@@ -385,6 +379,8 @@ class WanModel(ModelMixin, ConfigMixin):
         self.cross_attn_norm = cross_attn_norm
         self.eps = eps
 
+        self.gradient_checkpointing = False
+
         # embeddings
         self.patch_embedding = nn.Conv3d(
             in_dim, dim, kernel_size=patch_size, stride=patch_size
@@ -432,6 +428,9 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
+    def set_gradient_checkpointing(self, enabled = False):
+        self.gradient_checkpointing = enabled 
+
     def forward(
         self,
         x, # [B C T H W]
@@ -452,26 +451,22 @@ class WanModel(ModelMixin, ConfigMixin):
             e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
             e0 = self.time_projection(e).unflatten(1, (6, self.dim))
             assert e.dtype == torch.float32 and e0.dtype == torch.float32
+        e0 = e0.to(x.dtype)
 
         x, grid_sizes = self.patchify(x)
         seq_lens = torch.tensor(math.prod(grid_sizes), dtype=torch.long, device=device).repeat(x.size(0))
         grid_size_for_rope = torch.tensor(grid_sizes, dtype=torch.long, device=device).unsqueeze(0).repeat(x.size(0), 1)
         # context
         context_lens = None
-
+        context = self.text_embedding(context)
         # arguments
-        kwargs = dict(
-            e=e0,
-            seq_lens=seq_lens,
-            grid_sizes=grid_size_for_rope,
-            freqs=self.freqs,
-            context=context,
-            context_lens=context_lens,
-        )
+        args = [x, e0, seq_lens, grid_size_for_rope, self.freqs, context, context_lens]
 
-        for idx, block in enumerate(self.blocks):
-            print(f"Block {idx}")
-            x = block(x, **kwargs)
+        for block in self.blocks:
+            if self.gradient_checkpointing and self.training:
+                x = torch.utils.checkpoint.checkpoint(block, *args, use_reentrant=False)
+            else:
+                x = block(*args)
 
         # head
         x = self.head(x, e)
@@ -543,10 +538,12 @@ wan_model_blocks_to_float = {
 
 if __name__ == "__main__":
     device = "cuda:0"
-    dtype = torch.float16
+    dtype = torch.bfloat16
     model = WanModel().to(device=device, dtype=dtype)
+    model.set_gradient_checkpointing(True)
     x = torch.randn(2, 16, 16, 64, 64, device=device, dtype=dtype)
     t = torch.randint(0, 1000, (2,), device=device)
     context = torch.randn(2, 512, 4096, device=device, dtype=dtype)
-    y = model(x, t, context)
+    with torch.autocast("cuda", dtype=dtype):
+        y = model(x, t, context)
     print(y.shape)

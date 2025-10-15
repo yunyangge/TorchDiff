@@ -1,11 +1,11 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import torch
 
-try:
-    import flash_attn_interface
-    FLASH_ATTN_3_AVAILABLE = True
-except ModuleNotFoundError:
-    FLASH_ATTN_3_AVAILABLE = False
+# try:
+#     import flash_attn_interface
+#     FLASH_ATTN_3_AVAILABLE = True
+# except ModuleNotFoundError:
+FLASH_ATTN_3_AVAILABLE = False
 
 try:
     import flash_attn

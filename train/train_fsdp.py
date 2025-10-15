@@ -48,6 +48,8 @@ def main(config):
 
     # training config
     training_iteration = config.get("training_iteration", 1000000)
+    dd
+    gradient_checkpointing = config.get("gradient_checkpointing", False)
     gradient_accumulation_steps = config.get("gradient_accumulation_steps", 1)
     grad_norm_threshold = config.get("grad_norm_threshold", 1.0)
     log_interval = config.get("log_interval", 1)
@@ -120,6 +122,10 @@ def main(config):
         reshard_after_forward=reshard_after_forward,
         cpu_offload=model_cpu_offload,
     )
+
+    if gradient_checkpointing:
+        model.set_gradient_checkpointing(True)
+
     ema_model = EMAModel(model, decay=ema_decay, update_interval=ema_update_interval)
 
     model.train()
@@ -195,9 +201,9 @@ def main(config):
     while current_iteration < training_iteration:
         for batch in dataloader:
             current_batch_nums += 1
-            video = batch[VIDEO].to(torch.float32).to(device)
-            prompt_ids = batch[PROMPT_IDS].to(device)
-            prompt_mask = batch[PROMPT_MASK].to(device)
+            video = batch[VIDEO].to(dtype=torch.float32, device=device)
+            prompt_ids = batch[PROMPT_IDS].to(device=device)
+            prompt_mask = batch[PROMPT_MASK].to(device=device)
 
             with torch.no_grad():
                 latents = vae.encode(video)
@@ -208,9 +214,9 @@ def main(config):
             prior_dist = q_sample_results["prior_dist"]
             sigmas = q_sample_results["sigmas"]
             timesteps = q_sample_results["timesteps"]
-
+            # with torch.autocast("cuda", dtype=weight_dtype):
             model_output = model(
-                interpolated_latents,
+                interpolated_latents.to(weight_dtype),
                 timesteps,
                 text_embeddings,
             )
@@ -218,7 +224,7 @@ def main(config):
             loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
             loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1
             loss.backward()
-            loss_for_log = loss.detach().clone()
+            loss_for_log = loss.detach().clone().unsqueeze(0)
             gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
             gathered_avg_loss += gathered_loss.mean().item()
 

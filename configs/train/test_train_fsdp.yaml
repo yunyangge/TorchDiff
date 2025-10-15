@@ -6,6 +6,7 @@ seed: 1024
 output_dir: "./output/wan_t2v_fsdp"
 
 training_iteration: 1000000
+gradient_checkpointing: False
 gradient_accumulation_steps: 1
 grad_norm_threshold: 1.0
 log_interval: 1

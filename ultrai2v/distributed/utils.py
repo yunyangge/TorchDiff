@@ -39,4 +39,4 @@ def gather_data_from_all_ranks(data, dim=0):
         return data
     gather_list = [torch.zeros_like(data) for _ in range(world_size)]
     dist.all_gather(gather_list, data)
-    return torch.cat(gather_list, dim=dim)
+    return torch.s(gather_list, dim=dim)

@@ -19,11 +19,13 @@ def FSDP2_mix_warpper(
         param_dtype=weight_dtype,
         reduce_dtype=torch.float32,
         output_dtype=weight_dtype,
+        cast_forward_inputs=True
     )
     high_precision_policy = MixedPrecisionPolicy(
         param_dtype=torch.float32,
         reduce_dtype=torch.float32,
         output_dtype=weight_dtype,
+        cast_forward_inputs=True
     )
 
     fsdp_kwargs = {

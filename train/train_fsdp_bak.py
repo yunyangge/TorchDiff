@@ -1,5 +1,4 @@
 import os
-import math
 import yaml
 from tqdm import tqdm
 import torch
@@ -21,21 +20,14 @@ from ultrai2v.distributed.utils import (
 )
 from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
 from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
-from ultrai2v.distributed.tp_cp_warpper import CP_warpper
 
-from ultrai2v.modules import (
-    WanVAE, 
-    T5EncoderModel, 
-    models, 
-    models_main_block, 
-    models_blocks_to_float,
-    models_cp_plan,
-)
+from ultrai2v.modules import WanVAE, T5EncoderModel, models, models_main_block, models_blocks_to_float
 from ultrai2v.schedulers import schedulers
 
 from ultrai2v.distributed.checkpoint import Checkpointer
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
+
 
 
 def main(config):
@@ -69,7 +61,6 @@ def main(config):
     ema_decay = config.get("ema_decay", 0.9999)
     ema_update_interval = config.get("ema_update_interval", 1)
     explicit_prefetching_num_blocks = config.get("explicit_prefetching_num_blocks", 0)
-    use_context_parallel = config.get("use_context_parallel", False)
     
     # save config
     output_dir = config.get("output_dir", "./output")
@@ -84,25 +75,12 @@ def main(config):
     device = torch.device(f"cuda:{rank}")
     weight_dtype = str_to_precision(weight_dtype)
 
-    fsdp_size = config.get("fsdp_size", 8)
-    ddp_size = config.get("ddp_size", world_size // fsdp_size)
-    ddp_fsdp_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
-    log_on_main_process(logger, f"ddp_fsdp_mesh: {ddp_fsdp_mesh}")
-    print(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
+    ddp_size = config.get("ddp_size", 1)
+    fsdp_size = config.get("fsdp_size", world_size // ddp_size)
+    device_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
 
-    dp_group = dist.group.WORLD # use default world group
-    # cp
-    if use_context_parallel:
-        cp_size = config.get("cp_size", fsdp_size)
-        if cp_size == fsdp_size:
-            cp_mesh = ddp_fsdp_mesh["fsdp"]
-            dp_group = ddp_fsdp_mesh["ddp"].get_group()
-        else:
-            dp_cp_mesh = init_device_mesh("cuda", (world_size // cp_size, cp_size), mesh_dim_names=("dp", "cp"))
-            cp_mesh = dp_cp_mesh["cp"]
-            dp_group = dp_cp_mesh["dp"].get_group()
-        log_on_main_process(logger, f"We use context parallel, cp_size: {cp_size}")
-        logger.info(f"rank {rank} use cp_mesh {cp_mesh}")
+    log_on_main_process(logger, f"device_mesh: {device_mesh}")
+    print(f"rank {rank} use ddp mesh {device_mesh['ddp']} and fsdp mesh {device_mesh['fsdp']}")
 
     if rank == 0:
         os.makedirs(output_dir, exist_ok=True)
@@ -124,7 +102,7 @@ def main(config):
         device=device, # when no fsdp, we init the text_encoder on gpu
         checkpoint_path=text_encoder_config.get("checkpoint_path", None),
         use_fsdp=text_encoder_config.get("use_fsdp", False), # when using fsdp, we init the text_encoder on cpu, and use fsdp to shard the model to gpu
-        device_mesh=ddp_fsdp_mesh if text_encoder_config.get("use_fsdp", False) else None,
+        device_mesh=device_mesh if text_encoder_config.get("use_fsdp", False) else None,
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
     # vae.to(device)
@@ -145,17 +123,10 @@ def main(config):
         log_on_main_process(logger, f"Init model from scratch")
         model = models[model_name](**model_config)
 
-    if use_context_parallel and model.num_heads % cp_size != 0:
-        raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
-
     model.train()
-
-    if use_context_parallel:
-        CP_warpper(model, models_cp_plan[model_name], cp_mesh=cp_mesh)
-
     FSDP2_mix_warpper(
         model,
-        dp_mesh=ddp_fsdp_mesh,
+        dp_mesh=device_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
         blocks_to_float=models_blocks_to_float[model_name],
@@ -207,34 +178,18 @@ def main(config):
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
     current_batch_nums = current_iteration * gradient_accumulation_steps
 
-    set_seed(seed, device_specific=True, process_group=dp_group) # for training
-    
+    set_seed(seed, device_specific=True) # for training
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
-    # dataset
     dataset = ultra_datasets[data_config.pop("dataset_name", "t2v_random")](**data_config.get("dataset_config", {}))
-    if use_context_parallel:
-        video_shape = (
-            dataset.sample_num_frames // (4 * model.patch_size[0]) + 1,
-            dataset.sample_height // (8 * model.patch_size[1]),
-            dataset.sample_width // (8 * model.patch_size[2]),
-        )
-        text_len = dataset.text_max_length
-        if math.prod(video_shape) % cp_size != 0 or text_len % cp_size != 0:
-            raise ValueError(f"When using context parallel, sequence length {math.prod(video_shape)} must be multiple of cp_size {cp_size}!")
-    
-    # sampler
     batch_size = data_config.get("batch_size", 1)
-    dp_size = dp_group.size()
-    consumed_samples = current_iteration * batch_size * gradient_accumulation_steps * dp_size
     sampler = ultra_samplers[data_config.pop("sampler_name", "stateful_distributed")](
         dataset, 
-        num_replicas=dp_size,
-        rank=dist.get_rank(dp_group),
+        num_replicas=world_size,
+        rank=rank,
         shuffle=data_config.get("shuffle", True),
-        consumed_samples=consumed_samples,
+        consumed_samples=current_iteration * batch_size * gradient_accumulation_steps,
         drop_last=data_config.get("drop_last", True),
     )
-    # dataloader
     collator = ultra_collators[data_config.pop("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
     dataloader = DataLoader(
         dataset,
@@ -253,10 +208,7 @@ def main(config):
     Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
     After FSDP sharding,
     Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
-    Use Context Parallel: {use_context_parallel}, CP size: {cp_size if use_context_parallel else None}
     world_size: {world_size} GPUs
-    dp_size: {dp_size} GPUs
-    cp_size: {cp_size if use_context_parallel else None} GPUs
     Gradient checkpointing: {gradient_checkpointing}
     Weight dtype: {weight_dtype}
     Reshard after forward: {reshard_after_forward}
@@ -267,7 +219,7 @@ def main(config):
     Current iteration: {current_iteration}
     Batch size per GPU: {batch_size}
     Gradient accumulation steps: {gradient_accumulation_steps}
-    Effective batch size (dp_size x batch_size x gradient_accumulation_steps): {dp_size * batch_size * gradient_accumulation_steps}
+    Effective batch size (world_size x batch_size x gradient_accumulation_steps): {world_size * batch_size * gradient_accumulation_steps}
     Save model to {output_dir} every {save_interval} iterations
     Training ...
     =======================================================================
@@ -284,7 +236,7 @@ def main(config):
             with torch.no_grad():
                 latents = vae.encode(video)
                 text_embeddings = text_encoder(prompt_ids, prompt_mask)
-
+            
             q_sample_results = scheduler.q_sample(latents)
             interpolated_latents = q_sample_results["x_t"]
             prior_dist = q_sample_results["prior_dist"]
@@ -317,6 +269,7 @@ def main(config):
 
                 if current_iteration % save_interval == 0 or current_iteration == training_iteration:
                     log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
+                    
                     checkpointer.save(model, optimizer, current_iteration)
                     ema_model.store(model)
                     ema_model.ema_copy_to_model(model)

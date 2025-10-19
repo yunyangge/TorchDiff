@@ -32,7 +32,7 @@ class WanT2VDataset(Dataset):
         train_fps=16,
         sample_stride=None,
         text_drop_ratio=0.1,
-        tokenizer_max_length=512,
+        text_max_length=512,
         return_prompt_mask=True,
         **kwargs,
     ):
@@ -58,11 +58,11 @@ class WanT2VDataset(Dataset):
             raise ValueError("Must specify either train_fps or sample_stride")
 
         self.text_drop_ratio = text_drop_ratio
-        self.tokenizer_max_length = tokenizer_max_length
+        self.text_max_length = text_max_length
         self.return_prompt_mask = return_prompt_mask
         self.text_processor = WanTextProcessor(
             tokenizer=AutoTokenizer.from_pretrained(text_tokenizer_path),
-            model_max_length=self.tokenizer_max_length,
+            model_max_length=self.text_max_length,
             return_prompt_mask=self.return_prompt_mask,
         )
 
@@ -124,7 +124,7 @@ class RandomDataset(Dataset):
         sample_height=480,
         sample_width=832,
         sample_num_frames=49,
-        tokenizer_max_length=512,
+        text_max_length=512,
         return_prompt_mask=True,
         **kwargs,
     ):
@@ -132,11 +132,11 @@ class RandomDataset(Dataset):
         self.sample_width = sample_width
         self.sample_num_frames = sample_num_frames
 
-        self.tokenizer_max_length = tokenizer_max_length
+        self.text_max_length = text_max_length
         self.return_prompt_mask = return_prompt_mask
         self.text_processor = WanTextProcessor(
             tokenizer=AutoTokenizer.from_pretrained(text_tokenizer_path),
-            model_max_length=self.tokenizer_max_length,
+            model_max_length=self.text_max_length,
             return_prompt_mask=self.return_prompt_mask,
         )
 

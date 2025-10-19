@@ -130,7 +130,11 @@ class Checkpointer:
                 if pid not in state:
                     continue
                 param_state = state[pid]
-                full_param_state = full_state[full_pid]
+                full_param_state = full_state.get(full_pid, None)
+                if full_param_state is None:
+                    if torch.distributed.get_rank() == 0:
+                        print(f"WARN: param [{full_pid}] does NOT have param_state")
+                    continue
                 for attr, full_tensor in full_param_state.items():
                     sharded_tensor = param_state[attr]
                     if isinstance(sharded_tensor, DTensor):

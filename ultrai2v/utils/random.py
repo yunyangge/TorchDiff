@@ -29,7 +29,7 @@ def set_seed(
             process_group = dist.group.WORLD
         rank = dist.get_rank(process_group)
         seed += rank
-        logging.info(f"Using device specific seed {seed} on rank {rank}")
+        logging.info(f"Using device specific seed {seed} on local rank {rank} and global rank {dist.get_rank()}")
 
     random.seed(seed)
     np.random.seed(seed)

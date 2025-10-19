@@ -6,21 +6,22 @@ seed: 1024
 output_dir: "./output/wan_t2v_fsdp"
 
 training_iteration: 1000000
-ddp_size: 1
-# fsdp_size: 8
-reshard_after_forward: False
-gradient_checkpointing: False
+# ddp_size: 1
+fsdp_size: 8
+use_context_parallel: False
+reshard_after_forward: null
+gradient_checkpointing: True
 gradient_accumulation_steps: 1
 grad_norm_threshold: 1.0
 log_interval: 1
-save_interval: 10
+save_interval: 100
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
-save_with_dcp_api: True
+save_with_dcp_api: False
 
 model_config:
-  pretrained_model_dir_or_checkpoint: "/mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B"
+  pretrained_model_dir_or_checkpoint: "/mnt/data/checkpoints/wan/Wan2.1-T2V-14B"
 
 scheduler_config:
   scheduler_name: "flow_matching"
@@ -45,8 +46,8 @@ data_config:
   dataset_name: "t2v_random"
   dataset_config:
     text_tokenizer_path: "/mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B/google/umt5-xxl"
-    sample_height: 480
-    sample_width: 832
+    sample_height: 720
+    sample_width: 1280
     sample_num_frames: 81
     tokenizer_max_length: 512
     return_prompt_mask: True

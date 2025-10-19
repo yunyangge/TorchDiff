@@ -8,12 +8,18 @@ from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
 from functools import partial
 
+from torch.distributed.tensor.parallel import (
+    PrepareModuleInput,
+    PrepareModuleOutput,
+)
+from torch.distributed.tensor import Shard, Replicate
+
+
 from .attention import flash_attention
 
 __all__ = ["WanModel"]
 
 T5_CONTEXT_TOKEN_NUMBER = 512
-
 
 def sinusoidal_embedding_1d(dim, position):
     # preprocess
@@ -126,6 +132,10 @@ class WanSelfAttention(nn.Module):
         self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
+        # cp dummy layers
+        self.cp_self_attn_before_attention_layer = nn.Identity()
+        self.cp_self_attn_after_attention_layer = nn.Identity()
+
     def forward(self, x, seq_lens, grid_sizes, freqs):
         r"""
         Args:
@@ -144,6 +154,11 @@ class WanSelfAttention(nn.Module):
             return q, k, v
 
         q, k, v = qkv_fn(x)
+        
+        # maybe we need cp
+        q = self.cp_self_attn_before_attention_layer(q)
+        k = self.cp_self_attn_before_attention_layer(k)
+        v = self.cp_self_attn_before_attention_layer(v)
 
         x = flash_attention(
             q=rope_apply(q, grid_sizes, freqs),
@@ -153,6 +168,9 @@ class WanSelfAttention(nn.Module):
             window_size=self.window_size,
         )
 
+        # maybe we need cp
+        x = self.cp_self_attn_after_attention_layer(x)
+
         # output
         x = x.flatten(2)
         x = self.o(x)
@@ -160,6 +178,11 @@ class WanSelfAttention(nn.Module):
 
 
 class WanT2VCrossAttention(WanSelfAttention):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cp_cross_attn_before_attention_layer = nn.Identity()
+        self.cp_cross_attn_after_attention_layer = nn.Identity()
 
     def forward(self, x, context, context_lens):
         r"""
@@ -175,9 +198,17 @@ class WanT2VCrossAttention(WanSelfAttention):
         k = self.norm_k(self.k(context)).view(b, -1, n, d)
         v = self.v(context).view(b, -1, n, d)
 
+        # maybe we need cp
+        q = self.cp_cross_attn_before_attention_layer(q)
+        k = self.cp_cross_attn_before_attention_layer(k)
+        v = self.cp_cross_attn_before_attention_layer(v)
+
         # compute attention
         x = flash_attention(q, k, v, k_lens=context_lens)
 
+        # maybe we need cp
+        x = self.cp_cross_attn_after_attention_layer(x)
+        
         # output
         x = x.flatten(2)
         x = self.o(x)
@@ -244,21 +275,15 @@ class WanAttentionBlock(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         e = (self.modulation + e).chunk(6, dim=1)
-
         # self-attention
         y = self.self_attn(
             self.norm1(x) * (1 + e[1]) + e[0], seq_lens, grid_sizes, freqs
         )
         x = x + y * e[2]
-
         # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens)
-            y = self.ffn(self.norm2(x) * (1 + e[4]) + e[3])
-            x = x + y * e[5]
-            return x
-
-        x = cross_attn_ffn(x, context, context_lens, e)
+        x = x + self.cross_attn(self.norm3(x), context, context_lens)
+        y = self.ffn(self.norm2(x) * (1 + e[4]) + e[3])
+        x = x + y * e[5]
         return x
 
 
@@ -426,6 +451,10 @@ class WanModel(ModelMixin, ConfigMixin):
             dim=1,
         )
 
+        # cp dummy layers
+        self.cp_input_layer = nn.Identity()
+        self.cp_output_layer = nn.Identity()
+
         # initialize weights
         self.init_weights()
 
@@ -457,6 +486,11 @@ class WanModel(ModelMixin, ConfigMixin):
         x, grid_sizes = self.patchify(x)
         seq_lens = torch.tensor(math.prod(grid_sizes), dtype=torch.long, device=device).repeat(x.size(0))
         grid_size_for_rope = torch.tensor(grid_sizes, dtype=torch.long, device=device).unsqueeze(0).repeat(x.size(0), 1)
+        
+        # maybe we need cp
+        x = self.cp_input_layer(x)
+        context = self.cp_input_layer(context)
+
         # context
         context_lens = None
         context = self.text_embedding(context)
@@ -468,9 +502,11 @@ class WanModel(ModelMixin, ConfigMixin):
                 x = torch.utils.checkpoint.checkpoint(block, *args, use_reentrant=False)
             else:
                 x = block(*args)
-
+            args[0] = x
         # head
         x = self.head(x, e)
+
+        x = self.cp_output_layer(x)
 
         # unpatchify
         x = self.unpatchify(x, *grid_sizes)
@@ -535,6 +571,47 @@ wan_model_main_block = {
 
 wan_model_blocks_to_float = {
     "wan_t2v": [WanLayerNorm, WanRMSNorm]
+}
+
+wan_cp_plan = {
+    "wan_t2v": {
+        WanModel:{
+            "cp_input_layer": PrepareModuleInput(
+                input_layouts=(Replicate(),),
+                desired_input_layouts=(Shard(1),), # split on sequence dim, (B, N, C) -> (B, N / cp_size, C)
+                use_local_output=True,
+            ),
+            "cp_output_layer": PrepareModuleOutput(
+                output_layouts=(Shard(1),),
+                desired_output_layouts=(Replicate(),), # gather on sequence dim, (B, N / cp_size, C) -> (B, N, C)
+                use_local_output=True,
+            ),
+        },
+        WanSelfAttention: {
+            "cp_self_attn_before_attention_layer": PrepareModuleInput(
+                input_layouts=(Shard(1),), 
+                desired_input_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
+                use_local_output=True,
+            ),
+            "cp_self_attn_after_attention_layer": PrepareModuleOutput(
+                output_layouts=(Shard(2),),
+                desired_output_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
+                use_local_output=True,
+            ),
+        },
+        WanT2VCrossAttention: {
+            "cp_cross_attn_before_attention_layer": PrepareModuleInput(
+                input_layouts=(Shard(1),), 
+                desired_input_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
+                use_local_output=True,
+            ),
+            "cp_cross_attn_after_attention_layer": PrepareModuleOutput(
+                output_layouts=(Shard(2),),
+                desired_output_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
+                use_local_output=True,
+            ),
+        }
+    }
 }
 
 if __name__ == "__main__":

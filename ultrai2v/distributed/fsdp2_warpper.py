@@ -1,5 +1,6 @@
 
 import torch
+import logging
 from torch.distributed.fsdp import (
     CPUOffloadPolicy,
     MixedPrecisionPolicy,
@@ -15,6 +16,9 @@ def FSDP2_mix_warpper(
     reshard_after_forward=None,
     cpu_offload=False,
 ):
+    is_rank_zero = torch.distributed.get_rank() == 0
+    if is_rank_zero:
+        logging.info("Parallelize Module with FSDP2...")
     low_precision_policy = MixedPrecisionPolicy(
         param_dtype=weight_dtype,
         reduce_dtype=torch.float32,
@@ -38,12 +42,20 @@ def FSDP2_mix_warpper(
         for module in model.modules():
             for block in blocks_to_float:
                 if isinstance(module, block):
+                    if is_rank_zero:
+                        logging.info(f"FSDP {block} Module with High Precision.")
                     fully_shard(module, mp_policy=high_precision_policy, **fsdp_kwargs)
     if main_block_to_half is not None:
         for module in model.modules():
             if isinstance(module, main_block_to_half):
+                if is_rank_zero:
+                    logging.info(f"FSDP {main_block_to_half} Module with Low Precision.")
                 fully_shard(module, mp_policy=low_precision_policy, **fsdp_kwargs)
+    if is_rank_zero:
+        logging.info(f"FSDP Other Modules.")
     fully_shard(model, mp_policy=low_precision_policy, **fsdp_kwargs)
+    if is_rank_zero:
+        logging.info("FSDP Down!")
 
 
 def FSDP2_fp32_warpper(

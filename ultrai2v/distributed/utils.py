@@ -3,7 +3,7 @@ import logging
 import torch
 import torch.distributed as dist
 from datetime import timedelta
-
+from torch.distributed.tensor import DTensor, Replicate, Shard
 def setup_distributed_env(backend: str = "nccl", timeout: int = 300):
     """ Initialize distributed environment. """
     dist.init_process_group(backend=backend, timeout=timedelta(seconds=timeout))
@@ -41,3 +41,10 @@ def gather_data_from_all_ranks(data, dim=0):
     gather_list = [torch.zeros_like(data) for _ in range(world_size)]
     dist.all_gather(gather_list, data)
     return torch.stack(gather_list, dim=dim)
+
+def all_gather_tensor(tensor, dim=0, device_mesh=None):
+    tensor = DTensor.from_local(
+        tensor,
+        device_mesh=device_mesh,
+        placements=(Shard(dim),)
+    )

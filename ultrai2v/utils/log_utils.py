@@ -16,8 +16,8 @@ def log_on_main_process(logger, msg):
         logger.info(f" {msg}")
 
 
-def verify_min_gpu_count(min_gpus: int = 2):
-    """ verification that we have at least 2 gpus to run dist examples """
+def verify_min_gpu_count(min_gpus: int = 1):
+    """ verification that we have at least 1 gpu to run dist examples """
     has_gpu = torch.accelerator.is_available()
     gpu_count = torch.accelerator.device_count()
     if not (has_gpu and gpu_count >= min_gpus):

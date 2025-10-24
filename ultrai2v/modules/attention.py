@@ -1,6 +1,10 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import torch
 
+from ultrai2v.utils.utils import is_npu_available
+if is_npu_available():
+    import torch_npu
+
 # try:
 #     import flash_attn_interface
 #     FLASH_ATTN_3_AVAILABLE = True

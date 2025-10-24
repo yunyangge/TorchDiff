@@ -1,6 +1,7 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import logging
 
+import os
 import torch
 import torch.cuda.amp as amp
 import torch.nn as nn
@@ -607,11 +608,15 @@ def _video_vae(pretrained_path=None, z_dim=None, device='cpu', **kwargs):
     # init model
     with torch.device('meta'):
         model = WanVAE_(**cfg)
+    model.to_empty(device=device)
 
     # load checkpoint
-    logging.info(f'loading {pretrained_path}')
-    model.load_state_dict(
-        torch.load(pretrained_path, map_location=device), assign=True)
+    if pretrained_path is not None and os.path.exists(pretrained_path):
+        logging.info(f'loading {pretrained_path}')
+        model.load_state_dict(
+            torch.load(pretrained_path, map_location=device), assign=True)
+    else:
+        logging.info('testing mode, no loaded state dict...')
 
     return model
 

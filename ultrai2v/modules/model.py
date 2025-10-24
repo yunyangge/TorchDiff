@@ -13,9 +13,10 @@ from torch.distributed.tensor.parallel import (
     PrepareModuleOutput,
 )
 from torch.distributed.tensor import Shard, Replicate
+from ultrai2v.utils.utils import is_npu_available
 
 
-from .attention import flash_attention
+from .attention import flash_attention, attention
 
 __all__ = ["WanModel"]
 
@@ -51,6 +52,7 @@ def rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
 
     # split freqs
+    if is_npu_available(): freqs = freqs.to(torch.complex64)
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
 
     # loop over samples
@@ -160,7 +162,9 @@ class WanSelfAttention(nn.Module):
         k = self.cp_self_attn_before_attention_layer(k)
         v = self.cp_self_attn_before_attention_layer(v)
 
-        x = flash_attention(
+        attention_func = flash_attention if not is_npu_available else attention
+
+        x = attention_func(
             q=rope_apply(q, grid_sizes, freqs),
             k=rope_apply(k, grid_sizes, freqs),
             v=v,
@@ -204,7 +208,8 @@ class WanT2VCrossAttention(WanSelfAttention):
         v = self.cp_cross_attn_before_attention_layer(v)
 
         # compute attention
-        x = flash_attention(q, k, v, k_lens=context_lens)
+        attention_func = flash_attention if not is_npu_available() else attention
+        x = attention_func(q, k, v, k_lens=context_lens)
 
         # maybe we need cp
         x = self.cp_cross_attn_after_attention_layer(x)
@@ -477,11 +482,15 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.patch_embedding(x)
 
         # time embeddings
-        with torch.autocast("cuda", dtype=torch.float32):
-            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+        if not is_npu_available():
+            with torch.autocast("cuda", dtype=torch.float32):
+                e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+                e0 = self.time_projection(e).unflatten(1, (6, self.dim))
+                assert e.dtype == torch.float32 and e0.dtype == torch.float32
+            e0 = e0.to(x.dtype)
+        else:
+            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t))
             e0 = self.time_projection(e).unflatten(1, (6, self.dim))
-            assert e.dtype == torch.float32 and e0.dtype == torch.float32
-        e0 = e0.to(x.dtype)
 
         x, grid_sizes = self.patchify(x)
         seq_lens = torch.tensor(math.prod(grid_sizes), dtype=torch.long, device=device).repeat(x.size(0))
@@ -615,10 +624,17 @@ wan_cp_plan = {
 }
 
 if __name__ == "__main__":
+    if is_npu_available():
+        print("Use Ascend NPUs instead of Nvidia GPUs!")
+        import torch_npu
+        from torch_npu.contrib import transfer_to_npu
+        torch_npu.npu.config.allow_internal_format = False
+    else:
+        print("No available NPUs, so we use Nvidia GPUs or CPUs!")
     device = "cuda:0"
     dtype = torch.bfloat16
     model = WanModel().to(device=device, dtype=dtype)
-    # model.set_gradient_checkpointing(True)
+    model.set_gradient_checkpointing(True)
     x = torch.randn(2, 16, 21, 60, 104, device=device, dtype=dtype)
     t = torch.randint(0, 1000, (2,), device=device)
     context = torch.randn(2, 512, 4096, device=device, dtype=dtype)

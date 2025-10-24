@@ -3,6 +3,7 @@
 import logging
 import math
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -438,11 +439,12 @@ def _t5(name,
         model_cls = T5Model
 
     # init model
-    with torch.device(device):
+    with torch.device('meta'):
         model = model_cls(**kwargs)
-
+    
+    model.to_empty(device=device)
     # set device
-    model = model.to(dtype=dtype, device=device)
+    model = model.to(dtype=dtype)
 
     # init tokenizer
     if return_tokenizer:
@@ -475,7 +477,7 @@ class T5EncoderModel:
         self,
         text_len,
         dtype=torch.bfloat16,
-        device=torch.cuda.current_device(),
+        device="cuda:0",
         checkpoint_path=None,
         use_fsdp=False,
         device_mesh=None,
@@ -490,9 +492,12 @@ class T5EncoderModel:
             encoder_only=True,
             return_tokenizer=False,
             dtype=dtype,
-            device=torch.device("cpu")).eval().requires_grad_(False)
-        logging.info(f'loading text encoder from {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+            device=device).eval().requires_grad_(False)
+        if checkpoint_path is not None and os.path.exists(checkpoint_path):
+            logging.info(f'loading text encoder from {checkpoint_path}')
+            model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        else:
+            logging.info('testing mode, no loaded state dict...')
         if use_fsdp:
             logging.info('use fsdp to shard t5 model')
             from torch.distributed.fsdp import fully_shard

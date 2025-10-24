@@ -220,7 +220,6 @@ Requires-Dist: easydict
 Requires-Dist: ftfy
 Requires-Dist: dashscope
 Requires-Dist: imageio-ffmpeg
-Requires-Dist: flash_attn
 Requires-Dist: gradio>=5.0.0
 Requires-Dist: numpy<2,>=1.23.5
 Provides-Extra: dev

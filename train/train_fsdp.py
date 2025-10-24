@@ -2,7 +2,14 @@ import os
 import math
 import yaml
 from tqdm import tqdm
+
+from ultrai2v.utils.utils import is_npu_available
 import torch
+if is_npu_available():
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
+    torch_npu.npu.config.allow_internal_format = False
+
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
@@ -11,7 +18,7 @@ from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from UltraI2V.ultrai2v.utils.random_utils import set_seed
+from ultrai2v.utils.random_utils import set_seed
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
@@ -38,7 +45,6 @@ from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
 from ultrai2v.utils.clip_grads import AdaptiveGradClipper
 from ultrai2v.utils.encoder_cache import EncoderCacheManager
-
 
 def main(config):
     logger = get_logger()
@@ -344,7 +350,6 @@ def main(config):
 
 
 if __name__ == "__main__":
-
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, default="./configs/t2v.yaml")
     args = parser.parse_args()

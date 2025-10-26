@@ -26,3 +26,5 @@ torchrun \
   --master_port=${MASTER_PORT} \
   train/train_fsdp.py \
   --config configs/train/test_train_fsdp.yaml
+
+# torchrun --nproc_per_node=8 --nnodes=1 ultrai2v/utils/encoder_cache.py

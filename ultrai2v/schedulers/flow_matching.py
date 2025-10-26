@@ -142,26 +142,17 @@ class FlowMatchingScheduler:
         latents,
         sigmas=None,
         prior_dist=None,
-        tp_cp_device_mesh=None,
         **kwargs
     ):
         b, c, t, h, w = latents.shape
         if prior_dist is None:
-            if tp_cp_device_mesh is None:
-                prior_dist = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
-            else:
-                prior_dist = dist_tensor.randn(latents.shape, dtype=latents.dtype, device_mesh=tp_cp_device_mesh)
-
+            prior_dist = torch.randn_like(latents, dtype=latents.dtype, device=latents.device)
         image_seq_len = h * w // 4 if self.use_dynamic_shifting else None
         sigmas = self._set_sigmas(sigmas=sigmas, batch_size=b, image_seq_len=image_seq_len, device=latents.device)
         timesteps = sigmas.clone() * 1000
         while sigmas.ndim < latents.ndim:
             sigmas = sigmas.unsqueeze(-1)
-        
-        if tp_cp_device_mesh is not None:
-            sigmas = dist_tensor.distribute_tensor(sigmas, device_mesh=tp_cp_device_mesh)
-            timesteps = dist_tensor.distribute_tensor(timesteps, device_mesh=tp_cp_device_mesh)
-
+        # print(f"rank = {torch.distributed.get_rank()}, sigmas = {sigmas.squeeze().cpu().numpy()}")
         interpolated_latents = self.interpolation(latents, prior_dist, sigmas)
 
         return dict(x_t=interpolated_latents, prior_dist=prior_dist, sigmas=sigmas, timesteps=timesteps)

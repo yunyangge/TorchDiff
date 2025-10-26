@@ -8,20 +8,24 @@ output_dir: "./output/wan_t2v_fsdp"
 training_iteration: 1000000
 # ddp_size: 1
 fsdp_size: 8
-use_context_parallel: False
+use_context_parallel: True
 reshard_after_forward: null
 gradient_checkpointing: True
-gradient_accumulation_steps: 1
-grad_norm_threshold: 1.0
+gradient_accumulation_steps: 2
+init_max_grad_norm: 1.0
 log_interval: 1
-save_interval: 100
+save_interval: 20
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
 save_with_dcp_api: False
 
+wandb_config:
+  project_name: null
+  exp_name: null
+
 model_config:
-  pretrained_model_dir_or_checkpoint: "/mnt/data/checkpoints/wan/Wan2.1-T2V-14B"
+  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-14B/"
 
 scheduler_config:
   scheduler_name: "flow_matching"
@@ -29,12 +33,12 @@ scheduler_config:
   use_logitnorm_time_sampling: True
 
 vae_config:
-  vae_path: "/mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
+  vae_path: "/mnt/data2/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
   dtype: "fp32"
 
 text_encoder_config:
   text_len: 512
-  checkpoint_path: "/mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
+  checkpoint_path: "/mnt/data2/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
   use_fsdp: True
 
 data_config:
@@ -45,7 +49,7 @@ data_config:
   shuffle: True
   dataset_name: "t2v_random"
   dataset_config:
-    text_tokenizer_path: "/mnt/data/checkpoints/wan/Wan2.1-T2V-1.3B/google/umt5-xxl"
+    text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-1.3B/google/umt5-xxl"
     sample_height: 720
     sample_width: 1280
     sample_num_frames: 81

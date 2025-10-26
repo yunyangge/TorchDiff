@@ -162,7 +162,7 @@ class WanSelfAttention(nn.Module):
         k = self.cp_self_attn_before_attention_layer(k)
         v = self.cp_self_attn_before_attention_layer(v)
 
-        attention_func = flash_attention if not is_npu_available else attention
+        attention_func = flash_attention if not is_npu_available() else attention
 
         x = attention_func(
             q=rope_apply(q, grid_sizes, freqs),
@@ -482,15 +482,15 @@ class WanModel(ModelMixin, ConfigMixin):
         x = self.patch_embedding(x)
 
         # time embeddings
-        if not is_npu_available():
-            with torch.autocast("cuda", dtype=torch.float32):
-                e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
-                e0 = self.time_projection(e).unflatten(1, (6, self.dim))
-                assert e.dtype == torch.float32 and e0.dtype == torch.float32
-            e0 = e0.to(x.dtype)
-        else:
-            e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t))
-            e0 = self.time_projection(e).unflatten(1, (6, self.dim))
+        # if not is_npu_available():
+        #     with torch.autocast("cuda", dtype=torch.float32):
+        #         e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+        #         e0 = self.time_projection(e).unflatten(1, (6, self.dim))
+        #         assert e.dtype == torch.float32 and e0.dtype == torch.float32
+        #     e0 = e0.to(x.dtype)
+        # else:
+        e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
+        e0 = self.time_projection(e).unflatten(1, (6, self.dim))
 
         x, grid_sizes = self.patchify(x)
         seq_lens = torch.tensor(math.prod(grid_sizes), dtype=torch.long, device=device).repeat(x.size(0))

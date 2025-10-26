@@ -442,9 +442,9 @@ def _t5(name,
     with torch.device('meta'):
         model = model_cls(**kwargs)
     
-    model.to_empty(device=device)
-    # set device
-    model = model.to(dtype=dtype)
+    # set device and dtype
+    model = model.to_empty(device=device)
+    model = model.to(device=device, dtype=dtype)
 
     # init tokenizer
     if return_tokenizer:
@@ -477,7 +477,7 @@ class T5EncoderModel:
         self,
         text_len,
         dtype=torch.bfloat16,
-        device="cuda:0",
+        device="cuda",
         checkpoint_path=None,
         use_fsdp=False,
         device_mesh=None,

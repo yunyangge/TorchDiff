@@ -8,9 +8,31 @@ def str_to_precision(s):
         return torch.float16
     elif s == "float32" or s == "float" or s == "fp32":
         return torch.float32
+    elif s == "float64" or s == "double" or s == "fp64":
+        return torch.float64
+    elif s == "int64":
+        return torch.int64
+    elif s == "int32" or s == "int":
+        return torch.int32
     else:
         raise ValueError(f"Unsupported precision string: {s}")
 
+def precision_to_str(precision):
+    if precision == torch.bfloat16:
+        return "bfloat16"
+    elif precision == torch.float16:
+        return "float16"
+    elif precision == torch.float32:
+        return "float32"
+    elif precision == torch.float64:
+        return "float64"
+    elif precision == torch.int64:
+        return "int64"
+    elif precision == torch.int32:
+        return "int32"
+    else:
+        raise ValueError(f"Unsupported precision: {precision}")
+    
 def params_nums_to_str(params_num):
     if params_num >= 1e9:
         return f"{params_num / 1e9:.2f}B"

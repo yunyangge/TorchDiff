@@ -1,4 +1,3 @@
-
 import torch
 import logging
 from torch.distributed.fsdp import (
@@ -83,3 +82,61 @@ def FSDP2_fp32_warpper(
             if isinstance(module, main_block):
                 fully_shard(module, mp_policy=fp32_precision_policy, **fsdp_kwargs)
     fully_shard(model, mp_policy=fp32_precision_policy, **fsdp_kwargs)
+
+if __name__ == "__main__":
+    from torch.distributed.device_mesh import init_device_mesh
+    from ultrai2v.modules.model import wan_model, wan_model_blocks_to_float, wan_model_main_block
+    from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
+    
+    setup_distributed_env()
+
+    ddp_fsdp_mesh = init_device_mesh(
+        "cuda",
+        (8, 1),
+        mesh_dim_names=("ddp", "fsdp"),
+    )
+    print("ddp_fsdp_mesh:", ddp_fsdp_mesh)
+
+    model_name = "wan_t2v"
+    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    dtype = torch.bfloat16
+
+    latents = torch.randn(1, 16, 16, 64, 64).to(device=device, dtype=dtype)
+    text_embeddings = torch.randn(1, 512, 4096).to(device=device, dtype=dtype)
+    timesteps = torch.randint(0, 1000, (1,)).to(device=device)
+
+    ddp_model = wan_model[model_name]().to(device=device, dtype=dtype)
+    ddp_model = torch.nn.parallel.DistributedDataParallel(ddp_model)
+
+    fsdp_model = wan_model[model_name]()
+    ddp_fsdp_model = wan_model[model_name]()
+
+    FSDP2_mix_warpper(
+        ddp_fsdp_model,
+        dp_mesh=ddp_fsdp_mesh,
+        weight_dtype=dtype,
+        main_block_to_half=wan_model_main_block[model_name],
+        blocks_to_float=wan_model_blocks_to_float[model_name],
+        reshard_after_forward=True,
+        cpu_offload=False,
+    )
+
+    FSDP2_mix_warpper(
+        fsdp_model,
+        dp_mesh=None,
+        weight_dtype=dtype,
+        main_block_to_half=wan_model_main_block[model_name],
+        blocks_to_float=wan_model_blocks_to_float[model_name],
+        reshard_after_forward=True,
+        cpu_offload=False,
+    )
+    with torch.no_grad():
+        with torch.autocast(device_type='cuda', dtype=dtype):
+            fsdp_output = fsdp_model(latents, timesteps, text_embeddings)
+            ddp_output = ddp_model(latents, timesteps, text_embeddings)
+            ddp_fsdp_output = ddp_fsdp_model(latents, timesteps, text_embeddings)
+    print("fsdp_output - ddp_output MSE:", 1000 * torch.mean((fsdp_output.float() - ddp_output.float()) ** 2))
+    print("fsdp_output - ddp_fsdp_output MSE:", 1000 * torch.mean((fsdp_output.float() - ddp_fsdp_output.float()) ** 2))
+    print("ddp_output - ddp_fsdp_output MSE:", 1000 * torch.mean((ddp_output.float() - ddp_fsdp_output.float()) ** 2))
+
+    cleanup_distributed_env()

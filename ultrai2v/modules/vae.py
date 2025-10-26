@@ -3,7 +3,7 @@ import logging
 
 import os
 import torch
-import torch.cuda.amp as amp
+from contextlib import nullcontext
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
@@ -590,7 +590,7 @@ class WanVAE_(nn.Module):
         self._enc_feat_map = [None] * self._enc_conv_num
 
 
-def _video_vae(pretrained_path=None, z_dim=None, device='cpu', **kwargs):
+def _video_vae(pretrained_path=None, z_dim=None, device='cuda', dtype=torch.float32, **kwargs):
     """
     Autoencoder3d adapted from Stable Diffusion 1.x, 2.x and XL.
     """
@@ -608,7 +608,8 @@ def _video_vae(pretrained_path=None, z_dim=None, device='cpu', **kwargs):
     # init model
     with torch.device('meta'):
         model = WanVAE_(**cfg)
-    model.to_empty(device=device)
+    model = model.to_empty(device=device)
+    model = model.to(device=device, dtype=dtype)
 
     # load checkpoint
     if pretrained_path is not None and os.path.exists(pretrained_path):
@@ -647,14 +648,18 @@ class WanVAE:
         self.model = _video_vae(
             pretrained_path=vae_pth,
             z_dim=z_dim,
-        ).eval().requires_grad_(False).to(device)
+            device=device,
+            dtype=dtype,
+        ).eval().requires_grad_(False)
 
     def encode(self, videos):
         # videos: [B C T H W], range [-1, 1]
-        with torch.autocast("cuda", dtype=self.dtype):
+        context_manager = torch.autocast("cuda", dtype=self.dtype) if self.dtype != torch.float32 else nullcontext()
+        with context_manager:
             return self.model.encode(videos, self.scale).float()
 
     def decode(self, zs):
         # zs: [B C T H W]
-        with torch.autocast("cuda", dtype=self.dtype):
+        context_manager = torch.autocast("cuda", dtype=self.dtype) if self.dtype != torch.float32 else nullcontext()
+        with context_manager:
             return self.model.decode(zs, self.scale).float().clamp_(-1, 1)

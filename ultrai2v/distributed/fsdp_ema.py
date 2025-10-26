@@ -32,23 +32,23 @@ class FSDPEMAModel:
             assert isinstance(param, DTensor), f"{name}"
             assert isinstance(shadow_param, DTensor), f"{name}"
             if param.requires_grad:
-                shadow_param.data.sub_(self.one_minus_decay * (shadow_param.float() - param.float()))
+                shadow_param.data.sub_(self.one_minus_decay * (shadow_param.data.float() - param.data.float()))
             else:
-                shadow_param.data.copy_(param)
+                shadow_param.data.copy_(param.data)
 
     def ema_copy_to_model(self, model: FSDPModule):
         for name, param in model.named_parameters():
             shadow_param = self.shadow_params[name]
             assert isinstance(param, DTensor), f"{name}"
             assert isinstance(shadow_param, DTensor), f"{name}"
-            param.data.copy_(shadow_param)
+            param.data.copy_(shadow_param.data)
 
     def model_copy_to_ema(self, model: FSDPModule):
         for name, param in model.named_parameters():
             shadow_param = self.shadow_params[name]
             assert isinstance(param, DTensor), f"{name}"
             assert isinstance(shadow_param, DTensor), f"{name}"
-            shadow_param.data.copy_(param)
+            shadow_param.data.copy_(param.data)
 
     def store(self, model: FSDPModule):
         for name, param in model.named_parameters():
@@ -57,5 +57,5 @@ class FSDPEMAModel:
     def restore(self, model: FSDPModule):
         for name, param in model.named_parameters():
             assert name in self.backup
-            param.data.copy_(self.backup[name])
+            param.data.copy_(self.backup[name].data)
         self.backup = {}

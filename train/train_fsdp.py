@@ -19,7 +19,7 @@ from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from ultrai2v.utils.random_utils import set_seed
+from ultrai2v.utils.random_utils import set_seed, get_seed_worker
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
@@ -271,14 +271,16 @@ def main(config):
         drop_last=data_config.get("drop_last", True),
     )
     # dataloader
+    num_workers = data_config.get("num_workers", 16)
     collator = ultra_collators[data_config.pop("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
     dataloader = DataLoader(
         dataset,
-        batch_size=data_config.get("batch_size", 1),
+        batch_size=batch_size,
         sampler=sampler,
         collate_fn=collator,
-        num_workers=data_config.get("num_workers", 16),
+        num_workers=num_workers,
         pin_memory=data_config.get("pin_memory", True),
+        worker_init_fn=get_seed_worker(seed, num_workers=num_workers, device_specific=True),
     )
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 

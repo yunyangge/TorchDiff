@@ -8,10 +8,10 @@ output_dir: "./output/wan_t2v_fsdp"
 training_iteration: 1000000
 # ddp_size: 1
 fsdp_size: 8
-use_context_parallel: True
+use_context_parallel: False
 reshard_after_forward: null
 gradient_checkpointing: True
-gradient_accumulation_steps: 2
+gradient_accumulation_steps: 1
 init_max_grad_norm: 1.0
 log_interval: 1
 save_interval: 20
@@ -50,8 +50,8 @@ data_config:
   dataset_name: "t2v_random"
   dataset_config:
     text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-1.3B/google/umt5-xxl"
-    sample_height: 720
-    sample_width: 1280
+    sample_height: 480
+    sample_width: 832
     sample_num_frames: 81
     tokenizer_max_length: 512
     return_prompt_mask: True

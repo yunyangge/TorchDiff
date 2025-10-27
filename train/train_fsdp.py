@@ -89,9 +89,10 @@ def main(config):
     setup_distributed_env()
     verify_min_gpu_count()
 
-    rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    device = torch.device(f"cuda:{local_rank}")
     weight_dtype = str_to_precision(weight_dtype)
 
     # wandb config

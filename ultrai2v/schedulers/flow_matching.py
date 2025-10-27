@@ -152,7 +152,7 @@ class FlowMatchingScheduler:
         timesteps = sigmas.clone() * 1000
         while sigmas.ndim < latents.ndim:
             sigmas = sigmas.unsqueeze(-1)
-        print(f"rank = {torch.distributed.get_rank()}, sigmas = {sigmas.squeeze().cpu().numpy()}")
+        # print(f"rank = {torch.distributed.get_rank()}, sigmas = {sigmas.squeeze().cpu().numpy()}")
         interpolated_latents = self.interpolation(latents, prior_dist, sigmas)
 
         return dict(x_t=interpolated_latents, prior_dist=prior_dist, sigmas=sigmas, timesteps=timesteps)

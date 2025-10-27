@@ -115,6 +115,6 @@ class AdaptiveGradClipper:
             grad_norm_after_clip = torch.nn.utils.get_total_norm(grads_for_norm, error_if_nonfinite=True).item()
             # self.grad_norm_after_clip = grad_norm_after_clip
             self.grad_norm_after_clip = gather_data_from_all_ranks(torch.tensor([grad_norm_after_clip ** 2], device=self.device), group=self.model_parallel_group).sum().item() ** 0.5
-        if torch.distributed.get_rank() == 0:
-            print(f"Adaptive Grad Clip: grad_norm_before_clip={self.grad_norm_before_clip:.4f}, max_grad_norm={self.max_grad_norm:.4f}, grad_norm_after_clip={self.grad_norm_after_clip:.4f}")
+        # if torch.distributed.get_rank() == 0:
+        #     print(f"Adaptive Grad Clip: grad_norm_before_clip={self.grad_norm_before_clip:.4f}, max_grad_norm={self.max_grad_norm:.4f}, grad_norm_after_clip={self.grad_norm_after_clip:.4f}")
         return torch.tensor(self.grad_norm_after_clip)

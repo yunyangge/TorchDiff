@@ -45,7 +45,7 @@ text_encoder_config:
 data_config:
   batch_size: 1
   num_workers: 16
-  pin_memory: True
+  pin_memory: False
   drop_last: True
   shuffle: True
   dataset_name: "wan_t2v"

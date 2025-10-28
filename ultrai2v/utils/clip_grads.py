@@ -16,6 +16,7 @@ class AdaptiveGradClipper:
             self.model_parallel_group = model_parallel_group
 
         self.device = torch.device(f"cuda:{torch.cuda.current_device()}")
+        print(f"in AdaptiveGradClipper, rank: {torch.distributed.get_rank()}, device: {self.device}")
 
         self.moving_avg_max_grad_norm = -float('inf')
         self.moving_avg_max_grad_norm_var = 0.0

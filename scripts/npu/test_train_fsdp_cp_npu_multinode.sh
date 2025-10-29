@@ -1,5 +1,6 @@
 pkill -9 pt_main_thread
 pkill -9 python
+pkill -9 -f train.py
 ps aux | grep '[p]ython' | awk '{print $2}' | xargs -r kill -9
 tmux new -s clash -d "cd /work/share/projects/clash && ./clash -f 723.yaml"
 source /work/share/projects/clash/export.sh
@@ -13,7 +14,6 @@ wandb login --relogin $WANDB_API_KEY
 
 export TOKENIZERS_PARALLELISM=false
 
-# 该变量只用于规避megatron对其校验，对npu无效
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
 export ASCEND_GLOBAL_LOG_LEVEL=3

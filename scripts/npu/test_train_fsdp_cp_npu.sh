@@ -1,12 +1,12 @@
-export WANDB_MODE="online"
-export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
-wandb login --relogin $WANDB_API_KEY
+# export WANDB_MODE="online"
+# export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
+# wandb login --relogin $WANDB_API_KEY
+pkill -9 -f train.py
 
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
 export TOKENIZERS_PARALLELISM=false
 
-# 该变量只用于规避megatron对其校验，对npu无效
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
 export ASCEND_GLOBAL_LOG_LEVEL=3

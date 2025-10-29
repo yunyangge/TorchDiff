@@ -1,7 +1,16 @@
 import os
+import math
 import yaml
 from tqdm import tqdm
+import wandb
+
+from ultrai2v.utils.utils import is_npu_available
 import torch
+if is_npu_available():
+    import torch_npu
+    from torch_npu.contrib import transfer_to_npu
+    torch_npu.npu.config.allow_internal_format = False
+
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
@@ -10,7 +19,7 @@ from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from torch.utils.data import DataLoader
 
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from UltraI2V.ultrai2v.utils.random_utils import set_seed
+from ultrai2v.utils.random_utils import set_seed, get_seed_worker
 from ultrai2v.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
@@ -20,18 +29,27 @@ from ultrai2v.distributed.utils import (
 )
 from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
 from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
+from ultrai2v.distributed.tp_cp_warpper import CP_warpper
 
-from ultrai2v.modules import WanVAE, T5EncoderModel, models, models_main_block, models_blocks_to_float
+from ultrai2v.modules import (
+    WanVAE, 
+    T5EncoderModel, 
+    models, 
+    models_main_block, 
+    models_blocks_to_float,
+    models_cp_plan,
+)
 from ultrai2v.schedulers import schedulers
 
-from ultrai2v.distributed.checkpoint import Checkpointer
+from ultrai2v.distributed.checkpoint import Checkpointer, PREFIX as checkpoint_prefix
 from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK
 from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
-
-
+from ultrai2v.utils.clip_grads import AdaptiveGradClipper
+from ultrai2v.utils.encoder_cache import EncoderCacheManager
 
 def main(config):
     logger = get_logger()
+
     # config analysis
     seed = config.get("seed", 42)
 
@@ -52,7 +70,7 @@ def main(config):
     training_iteration = config.get("training_iteration", 1000000)
     gradient_checkpointing = config.get("gradient_checkpointing", False)
     gradient_accumulation_steps = config.get("gradient_accumulation_steps", 1)
-    grad_norm_threshold = config.get("grad_norm_threshold", 1.0)
+    init_max_grad_norm = config.get("init_max_grad_norm", 1.0)
     log_interval = config.get("log_interval", 1)
     save_interval = config.get("save_interval", 1000)
     weight_dtype = config.get("weight_dtype", "bfloat16")
@@ -61,7 +79,8 @@ def main(config):
     ema_decay = config.get("ema_decay", 0.9999)
     ema_update_interval = config.get("ema_update_interval", 1)
     explicit_prefetching_num_blocks = config.get("explicit_prefetching_num_blocks", 0)
-    
+    use_context_parallel = config.get("use_context_parallel", False)
+
     # save config
     output_dir = config.get("output_dir", "./output")
     save_with_dcp_api = config.get("save_with_dcp_api", False)
@@ -70,17 +89,53 @@ def main(config):
     setup_distributed_env()
     verify_min_gpu_count()
 
-    rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    device = torch.device(f"cuda:{rank}")
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    device = torch.device(f"cuda:{local_rank}")
     weight_dtype = str_to_precision(weight_dtype)
 
-    ddp_size = config.get("ddp_size", 1)
-    fsdp_size = config.get("fsdp_size", world_size // ddp_size)
-    device_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
+    # wandb config
+    wandb_config = config.get("wandb_config", {})
+    if wandb_config.get("project_name", None) is not None and rank == 0:
+        project_name = wandb_config.get("project_name")
+        wandb.init(
+            project=project_name,
+            name=wandb_config.get("exp_name", project_name),
+            config=config,
+            dir=output_dir
+        )
 
-    log_on_main_process(logger, f"device_mesh: {device_mesh}")
-    print(f"rank {rank} use ddp mesh {device_mesh['ddp']} and fsdp mesh {device_mesh['fsdp']}")
+    # init fsdp config
+    fsdp_size = config.get("fsdp_size", 8)
+    ddp_size = config.get("ddp_size", world_size // fsdp_size)
+    ddp_fsdp_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
+    logger.info(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
+
+    dp_group = dist.group.WORLD # use default world group
+    # init cp mesh if use context parallel
+    cp_size = 1
+    use_context_parallel = use_context_parallel and config.get("cp_size", 1) > 1
+    if use_context_parallel:
+        # cp size == model parallel (FSDP) size
+        cp_size = config.get("cp_size", fsdp_size)
+        if cp_size == fsdp_size:
+            cp_mesh = ddp_fsdp_mesh["fsdp"]
+            dp_group = ddp_fsdp_mesh["ddp"].get_group()
+        # cp size != model parallel (FSDP) size
+        else:
+            dp_cp_mesh = init_device_mesh("cuda", (world_size // cp_size, cp_size), mesh_dim_names=("dp", "cp"))
+            cp_mesh = dp_cp_mesh["cp"]
+            dp_group = dp_cp_mesh["dp"].get_group()
+        log_on_main_process(logger, f"We use context parallel, cp_size: {cp_size}")
+        logger.info(f"rank {rank} use cp mesh {cp_mesh}")
+
+    if (save_interval * gradient_accumulation_steps) % cp_size != 0:
+        raise ValueError(
+            f"""because we use context parallel and encoder cache,
+            save_interval * gradient_accumulation_steps ({save_interval} * {gradient_accumulation_steps} = {save_interval * gradient_accumulation_steps}) must be multiple of cp_size {cp_size}!
+            """
+        )
 
     if rank == 0:
         os.makedirs(output_dir, exist_ok=True)
@@ -99,10 +154,10 @@ def main(config):
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
         dtype=text_encoder_config.get("dtype", weight_dtype),
-        device=device, # when no fsdp, we init the text_encoder on gpu
+        device=device, # when no fsdp, we init the text_encoder on device
         checkpoint_path=text_encoder_config.get("checkpoint_path", None),
-        use_fsdp=text_encoder_config.get("use_fsdp", False), # when using fsdp, we init the text_encoder on cpu, and use fsdp to shard the model to gpu
-        device_mesh=device_mesh if text_encoder_config.get("use_fsdp", False) else None,
+        use_fsdp=text_encoder_config.get("use_fsdp", False), # when using fsdp, we shard the text encoder by ddp_fsdp mesh
+        device_mesh=ddp_fsdp_mesh if text_encoder_config.get("use_fsdp", False) else None,
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
     # vae.to(device)
@@ -123,10 +178,19 @@ def main(config):
         log_on_main_process(logger, f"Init model from scratch")
         model = models[model_name](**model_config)
 
+    if use_context_parallel and model.num_heads % cp_size != 0:
+        raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
+
     model.train()
+
+    # wrap model with cp warpper if use context parallel
+    if use_context_parallel:
+        CP_warpper(model, models_cp_plan[model_name], cp_mesh=cp_mesh)
+
+    # wrap model with fsdp2 mix-precision warpper
     FSDP2_mix_warpper(
         model,
-        dp_mesh=device_mesh,
+        dp_mesh=ddp_fsdp_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
         blocks_to_float=models_blocks_to_float[model_name],
@@ -139,10 +203,10 @@ def main(config):
         log_on_main_process(logger, "Use gradient checkpointing to save memory")
         model.set_gradient_checkpointing(True)
 
+    # FSDP EMA model
     log_on_main_process(logger, "Initializing ema model...")
     ema_model = EMAModel(model, decay=ema_decay, update_interval=ema_update_interval)
     log_on_main_process(logger, f"EMA model initialized, memory allocated: {get_memory_allocated()} GiB")
-
 
     if explicit_prefetching_num_blocks > 0:
         set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
@@ -164,51 +228,79 @@ def main(config):
         ema_model.model_copy_to_ema(model)
         
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
+    learning_rate = optimizer_config.get("lr", 1e-4)
+    weight_decay = optimizer_config.get("weight_decay", 1e-2)
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=optimizer_config.get("lr", 1e-4),
+        lr=learning_rate,
         betas=optimizer_config.get("betas", (0.9, 0.999)),
-        weight_decay=optimizer_config.get("weight_decay", 1e-2),
+        weight_decay=weight_decay,
         eps=optimizer_config.get("eps", 1e-15),
     )
+    log_on_main_process(logger, "Initializing adaptive gradient clipping...")
+    adaptive_grad_clipper = AdaptiveGradClipper(init_max_grad_norm=init_max_grad_norm, model_parallel_group=ddp_fsdp_mesh["fsdp"].get_group())
 
     if checkpointer.last_training_iteration is not None:
         checkpointer.load_optim(model, optimizer)
+        adaptive_grad_clipper.load(output_dir=f"{output_dir}/{checkpoint_prefix}{checkpointer.last_training_iteration:09d}")
 
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
     current_batch_nums = current_iteration * gradient_accumulation_steps
 
-    set_seed(seed, device_specific=True) # for training
+    set_seed(seed, device_specific=True, process_group=dp_group) # for training
+    
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
+    # dataset
     dataset = ultra_datasets[data_config.pop("dataset_name", "t2v_random")](**data_config.get("dataset_config", {}))
+    if use_context_parallel:
+        video_shape = (
+            dataset.sample_num_frames // (4 * model.patch_size[0]) + 1,
+            dataset.sample_height // (8 * model.patch_size[1]),
+            dataset.sample_width // (8 * model.patch_size[2]),
+        )
+        text_len = dataset.text_max_length
+        if math.prod(video_shape) % cp_size != 0 or text_len % cp_size != 0:
+            raise ValueError(f"When using context parallel, sequence length {math.prod(video_shape)} must be multiple of cp_size {cp_size}!")
+    
+    # sampler
     batch_size = data_config.get("batch_size", 1)
+    dp_size = dp_group.size() 
+    consumed_samples = current_iteration * batch_size * gradient_accumulation_steps * dp_size
     sampler = ultra_samplers[data_config.pop("sampler_name", "stateful_distributed")](
         dataset, 
-        num_replicas=world_size,
-        rank=rank,
+        num_replicas=dist.get_world_size(), # we use encoder cache, so num_replicas = world_size
+        rank=dist.get_rank(), # we use encoder cache, so rank in dp_group is same as global rank
         shuffle=data_config.get("shuffle", True),
-        consumed_samples=current_iteration * batch_size * gradient_accumulation_steps,
+        consumed_samples=consumed_samples,
         drop_last=data_config.get("drop_last", True),
     )
+    # dataloader
+    num_workers = data_config.get("num_workers", 16)
     collator = ultra_collators[data_config.pop("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
     dataloader = DataLoader(
         dataset,
-        batch_size=data_config.get("batch_size", 1),
+        batch_size=batch_size,
         sampler=sampler,
         collate_fn=collator,
-        num_workers=data_config.get("num_workers", 16),
+        num_workers=num_workers,
         pin_memory=data_config.get("pin_memory", True),
+        worker_init_fn=get_seed_worker(seed, num_workers=num_workers, device_specific=True),
     )
+    encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 
     tqdm_bar = tqdm(total=training_iteration, disable=(rank != 0), initial=current_iteration, desc="Training")
     gathered_avg_loss = 0.0
     start_training_logs = f"""
-    =============================Start Training=============================
+    {'=' * 20}Start Training{'=' * 20}
+    Model: {model_name}
     Before FSDP sharding,
     Model has {params_nums_to_str(sum(p.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
     After FSDP sharding,
     Model has {params_nums_to_str(sum(p._local_tensor.numel() for p in model.parameters() if p.requires_grad))} trainable parameters
+    Use Context Parallel: {use_context_parallel}
     world_size: {world_size} GPUs
+    dp_size: {dp_size} GPUs
+    cp_size: {cp_size} GPUs
     Gradient checkpointing: {gradient_checkpointing}
     Weight dtype: {weight_dtype}
     Reshard after forward: {reshard_after_forward}
@@ -217,26 +309,39 @@ def main(config):
     Random seed: {seed}
     Training iterations: {training_iteration}
     Current iteration: {current_iteration}
+    Initial learning rate: {learning_rate}
+    Weight decay: {weight_decay}
     Batch size per GPU: {batch_size}
     Gradient accumulation steps: {gradient_accumulation_steps}
-    Effective batch size (world_size x batch_size x gradient_accumulation_steps): {world_size * batch_size * gradient_accumulation_steps}
+    Effective batch size (dp_size x batch_size x gradient_accumulation_steps): {dp_size * batch_size * gradient_accumulation_steps}
     Save model to {output_dir} every {save_interval} iterations
     Training ...
-    =======================================================================
+    {'=' * 20}{'=' * len('Start Training')}{'=' * 20}
     """
     log_on_main_process(logger, start_training_logs)
 
     while current_iteration < training_iteration:
         for batch in dataloader:
-            current_batch_nums += 1
             video = batch[VIDEO].to(dtype=torch.float32, device=device)
             prompt_ids = batch[PROMPT_IDS].to(device=device)
             prompt_mask = batch[PROMPT_MASK].to(device=device)
             
-            with torch.no_grad():
-                latents = vae.encode(video)
-                text_embeddings = text_encoder(prompt_ids, prompt_mask)
-            
+            if current_batch_nums % cp_size == 0:
+                with torch.no_grad():
+                    latents = vae.encode(video)
+                    text_embeddings = text_encoder(prompt_ids, prompt_mask)
+                    vae_latents_list, text_embeds_list = encoder_cache_manager(
+                        vae_latents_list=[latents],
+                        text_embeds_list=[text_embeddings],
+                        step=current_batch_nums
+                    )
+            else:
+                vae_latents_list, text_embeds_list = encoder_cache_manager(step=current_batch_nums)
+            latents = vae_latents_list[0]
+            text_embeddings = text_embeds_list[0]
+
+            current_batch_nums += 1
+
             q_sample_results = scheduler.q_sample(latents)
             interpolated_latents = q_sample_results["x_t"]
             prior_dist = q_sample_results["prior_dist"]
@@ -255,43 +360,50 @@ def main(config):
             loss_for_log = loss.clone().detach().unsqueeze(0)
             gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
             gathered_avg_loss += gathered_loss.mean().item()
-            if (current_batch_nums) % gradient_accumulation_steps == 0:
+            if current_batch_nums % gradient_accumulation_steps == 0:
                 current_iteration += 1
-                if grad_norm_threshold > 0.0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_norm_threshold)
+                grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
+                # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
                 optimizer.step()
                 optimizer.zero_grad()
                 ema_model.update(model, current_iteration)
 
                 if current_iteration % log_interval == 0:
                     tqdm_bar.update(log_interval)
-                    tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr']})
+                    tqdm_bar.set_postfix({"loss": gathered_avg_loss, "lr": optimizer.param_groups[0]['lr'], "grad_norm": grad_norm_after_clip.item()})
+                    if rank == 0 and wandb.run is not None:
+                        wandb_logs = {
+                            "train/loss": gathered_avg_loss,
+                            "train/lr": optimizer.param_groups[0]['lr'],
+                            "train/grad_norm": grad_norm_after_clip.item(),
+                        }
+                        wandb_logs.update(adaptive_grad_clipper.state_dict())
+                        wandb.log(wandb_logs, step=current_iteration)
 
                 if current_iteration % save_interval == 0 or current_iteration == training_iteration:
                     log_on_main_process(logger, f"Saving model checkpoint at iteration {current_iteration}...")
-                    
                     checkpointer.save(model, optimizer, current_iteration)
                     ema_model.store(model)
                     ema_model.ema_copy_to_model(model)
                     checkpointer.save_ema_model(model, current_iteration)
                     ema_model.restore(model)
+                    adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{current_iteration:09d}")
                 
                 gathered_avg_loss = 0.0    
 
     end_training_logs = f"""
-    =============================End Training=============================
+    {'=' * 20}End Training{'=' * 20}
     training iteration: {current_iteration}
     consumed samples: {current_batch_nums * batch_size}
     Model saved to {output_dir}
     Training finished.
-    =======================================================================
+    {'=' * 20}{'=' * len('End Training')}{'=' * 20}
     """
     log_on_main_process(logger, end_training_logs)
     cleanup_distributed_env()
 
 
 if __name__ == "__main__":
-
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, default="./configs/t2v.yaml")
     args = parser.parse_args()

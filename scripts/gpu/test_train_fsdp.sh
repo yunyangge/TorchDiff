@@ -25,7 +25,7 @@ torchrun \
   --nnodes=${NNODES} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  train/train_fsdp.py \
+  train/train.py \
   --config configs/train/gpu/test_train_fsdp.yaml
 
 # torchrun --nproc_per_node=8 --nnodes=1 ultrai2v/utils/encoder_cache.py

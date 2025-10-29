@@ -48,5 +48,5 @@ torchrun \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  train/train_fsdp.py \
+  train/train.py \
   --config configs/train/npu/test_train_fsdp_cp_npu_multinode.yaml

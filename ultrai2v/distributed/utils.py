@@ -7,7 +7,7 @@ from torch.distributed.tensor import DTensor, Replicate, Shard
 from typing import Iterable
 from ultrai2v.utils.utils import str_to_precision, precision_to_str
 
-def setup_distributed_env(backend: str = "nccl", timeout: int = 1800):
+def setup_distributed_env(backend: str = "nccl", timeout: int = 3600):
     """ Initialize distributed environment. """
     dist.init_process_group(backend=backend, timeout=timedelta(seconds=timeout))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))

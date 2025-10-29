@@ -14,6 +14,8 @@ def log_on_main_process(logger, msg):
     """helper function to log only on global rank 0"""
     if torch.distributed.get_rank(torch.distributed.group.WORLD) == 0:
         logger.info(f" {msg}")
+    else:
+        torch.distributed.barrier()
 
 
 def verify_min_gpu_count(min_gpus: int = 1):

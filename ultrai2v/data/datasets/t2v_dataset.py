@@ -75,7 +75,7 @@ class WanT2VDataset(Dataset):
         )
 
         self.executor = ThreadPoolExecutor(max_workers=1)
-        self.timeout = kwargs.get("timeout", 300) 
+        self.timeout = kwargs.get("timeout", 600) 
 
 
     def __getitem__(self, index):

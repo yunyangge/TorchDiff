@@ -20,10 +20,11 @@ weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
 save_with_dcp_api: False
+explicit_prefetching_num_blocks: 4
 
 wandb_config:
-  project_name: "test_train_fsdp_cp_npu"
-  exp_name: "test_train_fsdp_cp_npu"
+  project_name: null
+  exp_name: null
 
 model_config:
   pretrained_model_dir_or_checkpoint: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/"

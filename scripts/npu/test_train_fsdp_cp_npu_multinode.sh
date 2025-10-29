@@ -5,11 +5,25 @@ tmux new -s clash -d "cd /work/share/projects/clash && ./clash -f 723.yaml"
 source /work/share/projects/clash/export.sh
 sleep 10s
 echo "start process..."
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+
 export WANDB_MODE="online"
 export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
 wandb login --relogin $WANDB_API_KEY
 
 export TOKENIZERS_PARALLELISM=false
+
+# 该变量只用于规避megatron对其校验，对npu无效
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+export ASCEND_SLOG_PRINT_TO_STDOUT=0
+export ASCEND_GLOBAL_LOG_LEVEL=3
+export MULTI_STREAM_MEMORY_REUSE=1
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+export TASK_QUEUE_ENABLE=1
+export COMBINED_ENABLE=1
+export CPU_AFFINITY_CONF=1
+export HCCL_CONNECT_TIMEOUT=3600
+export ACL_DEVICE_SYNC_TIMEOUT=3600
 
 # export NCCL_IB_TC=136
 # export NCCL_IB_SL=5

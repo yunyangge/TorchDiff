@@ -284,7 +284,7 @@ def main(config):
         sampler=sampler,
         collate_fn=collator,
         num_workers=num_workers,
-        pin_memory=data_config.get("pin_memory", True),
+        pin_memory=data_config.get("pin_memory", False),
         worker_init_fn=get_seed_worker(seed, num_workers=num_workers, device_specific=True),
     )
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
@@ -321,7 +321,7 @@ def main(config):
     """
     log_on_main_process(logger, start_training_logs)
 
-    dataloader_iter = iter(cyclic_iter(dataloader)) # when one epoch is finished, this func with call __iter__ in sampler to produce next iter with different seed
+    dataloader_iter = iter(cyclic_iter(dataloader)) # when one epoch is finished, this func will call __iter__ in sampler to produce next iter with different seed
     while current_iteration < training_iteration:
         if current_batch_nums % cp_size == 0:
             batch = next(dataloader_iter)

@@ -129,11 +129,12 @@ class FlowMatchingScheduler:
     def get_latent_model_input(self, latents, **kwargs):
         start_frame_latents = kwargs.get("start_frame_latents", None)
         fourier_features = kwargs.get("fourier_features", None)
-        assert start_frame_latents is not None and fourier_features is not None
-        
-        latent_model_input_cond = latent_model_input_uncond = latents - start_frame_latents
-        latent_model_input_cond = torch.cat([latent_model_input_cond, fourier_features], dim=1)
-        latent_model_input_uncond = torch.cat([latent_model_input_uncond, fourier_features], dim=1)
+        if start_frame_latents is not None and fourier_features is not None:
+            latent_model_input_cond = latent_model_input_uncond = latents - start_frame_latents
+            latent_model_input_cond = torch.cat([latent_model_input_cond, fourier_features], dim=1)
+            latent_model_input_uncond = torch.cat([latent_model_input_uncond, fourier_features], dim=1)
+        else:
+            latent_model_input_cond = latent_model_input_uncond = latents
 
         return latent_model_input_cond, latent_model_input_uncond
 

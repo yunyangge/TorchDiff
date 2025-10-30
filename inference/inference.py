@@ -6,7 +6,9 @@ from argparse import ArgumentParser
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 
-from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
+from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
+from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
+from ultrai2v.distributed.tp_cp_warpper import CP_warpper
 from ultrai2v.modules import (
     WanVAE, 
     T5EncoderModel, 
@@ -20,6 +22,7 @@ from ultrai2v.distributed.checkpoint import Checkpointer
 from ultrai2v.utils.utils import str_to_precision, get_memory_allocated
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process
 from ultrai2v.pipelines import pipelines
+from ultrai2v.utils.infer_utils import load_prompts, load_images, save_videos, save_video_grid
 
 def main(config):
     logger = get_logger()
@@ -37,9 +40,13 @@ def main(config):
     # inference config
     pipeline_name = config.get("pipeline_name", "t2v")
     prompt_txt = config.get("prompt_txt", None)
+    batch_size = config.get("batch_size", 1)
     num_frames = config.get("num_frames", 49)
     height = config.get("height", 480)
     width = config.get("width", 832)
+    save_fps = config.get("save_fps", 16)
+    reshard_after_forward = config.get("reshard_after_forward", None)
+    model_cpu_offload = config.get("model_cpu_offload", False)
 
     # save config
     output_dir = config.get("output_dir", "./output")
@@ -118,6 +125,21 @@ def main(config):
 
     if use_context_parallel and model.num_heads % cp_size != 0:
         raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
+    
+        # wrap model with cp warpper if use context parallel
+    if use_context_parallel:
+        CP_warpper(model, models_cp_plan[model_name], cp_mesh=cp_mesh)
+
+    # wrap model with fsdp2 mix-precision warpper
+    FSDP2_mix_warpper(
+        model,
+        dp_mesh=ddp_fsdp_mesh,
+        weight_dtype=weight_dtype,
+        main_block_to_half=models_main_block[model_name],
+        blocks_to_float=models_blocks_to_float[model_name],
+        reshard_after_forward=reshard_after_forward,
+        cpu_offload=model_cpu_offload,
+    )
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
 
@@ -129,11 +151,49 @@ def main(config):
         scheduler=scheduler
     )
 
+    with open(prompt_txt, "r") as f:
+        prompts = f.readlines()
+
+    dp_rank = torch.distributed.get_rank(dp_group)
+    cp_rank = torch.distributed.get_rank(cp_mesh.get_group())
+    cp_size = torch.distributed.get_world_size(cp_mesh.get_group())
+    video_grid = []
+    for index in range(dp_rank * batch_size, len(prompts), batch_size * world_size):
+        batch_prompts = prompts[index: index + batch_size]
+        videos = pipeline(
+            prompt=batch_prompts,
+            num_frames=num_frames,
+            height=height,
+            width=width,
+            seed=seed,
+            max_sequence_length=512,
+            device=device
+        )
+        if cp_rank == 0:
+            save_videos(videos, index, output_dir, save_fps)
+            video_grid.append(videos)
+
+    if len(video_grid) > 0:
+        video_grid = torch.cat(video_grid, dim=0).to(device)
+
+    if len(prompts) < batch_size * world_size:
+        active_ranks = range(len(prompts) // batch_size)
+    else:
+        active_ranks = range(world_size)
+
+    active_ranks = [x * cp_size for x in active_ranks]
+
+    torch.distributed.barrier()
+    gathered_videos = gather_tensor_list_to_one(video_grid, group_dst=0, active_ranks=active_ranks)
+    torch.distributed.barrier()
+
+    if rank == 0:
+        video_grid = torch.cat(gathered_videos, dim=0)
+        save_video_grid(video_grid, output_dir, fps=save_fps)
+        print("Inference finished.")
+        print(f"Saved {video_grid.shape[0]} samples to {output_dir}")
 
     cleanup_distributed_env()
-
-
-
 
 
 

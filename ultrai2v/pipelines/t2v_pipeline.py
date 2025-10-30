@@ -9,7 +9,7 @@ from ultrai2v.utils.constant import NEGATIVE_PROMOPT
 
 class T2VInferencePipeline(DiffusionPipeline):
 
-    model_cpu_offload_seq = "text_encoder->predictor->vae"
+    # model_cpu_offload_seq = "text_encoder->predictor->vae"
 
     def __init__(
         self, 
@@ -146,8 +146,7 @@ class T2VInferencePipeline(DiffusionPipeline):
         video = video.mul(255).add_(0.5).clamp_(0, 255).permute(0, 2, 3, 4, 1).to("cpu", torch.uint8)
         return video
 
-
-    
+    @torch.inference_mode()
     def __call__(
         self,
         prompt,
@@ -182,6 +181,7 @@ class T2VInferencePipeline(DiffusionPipeline):
             negative_prompt_embeds=negative_prompt_embeds,
             max_sequence_length=max_sequence_length,
             device=device,
+            dtype=self.text_encoder.dtype,
         )
 
         shape = (

@@ -52,22 +52,23 @@ def broadcast_tensor_list(tensors, group_src=0, group=None):
     if group is None:
         group = dist.group.WORLD
     group_rank = dist.get_rank(group)
+    device = torch.device("cuda")
     # broadcast tensor list length
     if group_rank == group_src:
-        n = torch.tensor(len(tensors), device=tensors[0].device, dtype=torch.int)
+        nums = torch.tensor(len(tensors), device=tensors[0].device, dtype=torch.int)
     else:
-        n = torch.tensor(0, device=torch.device("cuda"), dtype=torch.int)
-    dist.broadcast(n, group=group, group_src=group_src)
-    n = int(n.item())
+        nums = torch.tensor(0, device=device, dtype=torch.int)
+    dist.broadcast(nums, group=group, group_src=group_src)
+    nums = int(nums.item())
 
-    tensors = tensors if group_rank == group_src else [None] * n
+    tensors = tensors if group_rank == group_src else [None] * nums
 
-    for i in range(n):
+    for i in range(nums):
         # broadcast tensor ndim
         if group_rank == group_src:
             ndim = torch.tensor(len(tensors[i].shape), device=tensors[i].device, dtype=torch.int)
         else:
-            ndim = torch.tensor(0, device="cuda", dtype=torch.int)
+            ndim = torch.tensor(0, device=device, dtype=torch.int)
         dist.broadcast(ndim, group=group, group_src=group_src)
         ndim = int(ndim.item())
 
@@ -75,7 +76,7 @@ def broadcast_tensor_list(tensors, group_src=0, group=None):
         if group_rank == group_src:
             shape = torch.tensor(tensors[i].shape, device=tensors[i].device, dtype=torch.int)
         else:
-            shape = torch.empty((ndim, ), device="cuda", dtype=torch.int)
+            shape = torch.empty((ndim, ), device=device, dtype=torch.int)
         dist.broadcast(shape, group=group, group_src=group_src)
         shape = tuple(shape.tolist())
 
@@ -85,11 +86,75 @@ def broadcast_tensor_list(tensors, group_src=0, group=None):
         else:
             dtype_str = [None]
         dist.broadcast_object_list(dtype_str, group=group, group_src=group_src)
+        dtype = str_to_precision(dtype_str[0])
 
         # broadcast tensor data
-        dtype = str_to_precision(dtype_str[0])
         if group_rank != group_src:
-            tensors[i] = torch.empty(shape, device="cuda", dtype=dtype)
+            tensors[i] = torch.empty(shape, device=device, dtype=dtype)
         dist.broadcast(tensors[i], group=group, group_src=group_src)
 
     return tensors
+
+def gather_tensor_list_to_one(tensors, group_dst=0, group=None, active_ranks=None, to_cpu=True):
+    """ gather a list of tensors from all other ranks to dst rank. """
+    if group is None:
+        group = dist.group.WORLD
+    group_rank = dist.get_rank(group)
+    if active_ranks is None:
+        active_ranks = range(dist.get_world_size(group))
+
+    device = torch.device("cuda")
+    gathered_tensors = []
+    if group_rank == group_dst:
+        for r in active_ranks:
+            if r != 0:
+                # recv tensor list length
+                nums = torch.tensor(0, device=device, dtype=torch.int)
+                dist.recv(nums, group=group, group_src=r)
+                nums = int(nums.item())
+
+                for i in range(nums):
+                    # recv tensor ndim
+                    ndim = torch.tensor(0, device=device, dtype=torch.int)
+                    dist.recv(ndim, group=group, group_src=r)
+                    ndim = int(ndim.item())
+
+                    # recv tensor shape
+                    shape = torch.empty((ndim, ), device=device, dtype=torch.int)
+                    dist.recv(shape, group=group, group_src=r)
+                    shape = tuple(shape.tolist())
+
+                    # recv tensor dtype
+                    dtype_str = [None]
+                    dist.recv_object_list(dtype_str, group=group, group_src=r)
+                    dtype = str_to_precision(dtype_str[0])
+
+                    # recv tensor data
+                    tensor = torch.empty(shape, device=device, dtype=dtype)
+                    dist.recv(tensor, group=group, group_src=r)
+                    if to_cpu: tensor = tensor.cpu()
+                    gathered_tensors.append(tensor)
+            else:
+                if to_cpu: tensors = tensors.cpu()
+                gathered_tensors.extend(tensors)
+    elif group_rank in active_ranks:
+        # send tensor list length
+        nums = torch.tensor(len(tensors), device=tensors[0].device, dtype=torch.int)
+        dist.send(nums, group=group, group_dst=group_dst)
+
+        for i in range(len(tensors)):
+            # send tensor ndim
+            ndim = torch.tensor(len(tensors[i].shape), device=tensors[i].device, dtype=torch.int)
+            dist.send(ndim, group=group, group_dst=group_dst)
+
+            # send tensor shape
+            shape = torch.tensor(tensors[i].shape, device=tensors[i].device, dtype=torch.int)
+            dist.send(shape, group=group, group_dst=group_dst)
+
+            # send tensor dtype
+            dtype_str = [precision_to_str(tensors[i].dtype)]
+            dist.send_object_list(dtype_str, group=group, group_dst=group_dst)
+
+            # send tensor data
+            dist.send(tensors[i], group=group, group_dst=group_dst)
+    return gathered_tensors if group_rank == group_dst else None

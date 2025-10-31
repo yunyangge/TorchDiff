@@ -4,13 +4,9 @@ import yaml
 from tqdm import tqdm
 import wandb
 
-from ultrai2v.utils.utils import is_npu_available
+from ultrai2v.utils.utils import check_and_import_npu
 import torch
-if is_npu_available():
-    import torch_npu
-    from torch_npu.contrib import transfer_to_npu
-    torch_npu.npu.config.allow_internal_format = False
-
+check_and_import_npu()
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 from argparse import ArgumentParser
@@ -177,6 +173,7 @@ def main(config):
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
     else:
         log_on_main_process(logger, f"Init model from scratch")
+        set_seed(seed, device_specific=False) # for init
         model = models[model_name](**model_config)
 
     if use_context_parallel and model.num_heads % cp_size != 0:

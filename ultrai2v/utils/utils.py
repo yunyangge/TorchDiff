@@ -14,6 +14,8 @@ def str_to_precision(s):
         return torch.int64
     elif s == "int32" or s == "int":
         return torch.int32
+    elif s == "uint8":
+        return torch.uint8
     else:
         raise ValueError(f"Unsupported precision string: {s}")
 
@@ -30,6 +32,8 @@ def precision_to_str(precision):
         return "int64"
     elif precision == torch.int32:
         return "int32"
+    elif precision == torch.uint8:
+        return "uint8"
     else:
         raise ValueError(f"Unsupported precision: {precision}")
     
@@ -53,3 +57,10 @@ def is_npu_available():
     except:
         is_available = False
     return is_available
+
+def check_and_import_npu():
+    is_available = is_npu_available()
+    if is_available:
+        import torch_npu
+        from torch_npu.contrib import transfer_to_npu
+        torch_npu.npu.config.allow_internal_format = False

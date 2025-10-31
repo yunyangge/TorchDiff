@@ -5,11 +5,8 @@ from torch.distributed.fsdp import (
     MixedPrecisionPolicy,
     fully_shard,
 )
-from ultrai2v.utils.utils import is_npu_available
-if is_npu_available():
-    import torch_npu
-    from torch_npu.contrib import transfer_to_npu
-    torch_npu.npu.config.allow_internal_format = False
+from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
+check_and_import_npu()
 
 def FSDP2_mix_warpper(
     model,

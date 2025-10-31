@@ -196,7 +196,10 @@ class T2VInferencePipeline(DiffusionPipeline):
             generator = torch.Generator().manual_seed(seed)
         latents = self.prepare_latents(shape, generator=generator, device=device, dtype=prompt_embeds.dtype)
 
-        model_kwargs = {}
+        model_kwargs = {
+            "prompt_embeds": prompt_embeds,
+            "negative_prompt_embeds": negative_prompt_embeds,
+        }
 
         latents = self.scheduler.sample(model=self.predictor, latents=latents, **model_kwargs)
 

@@ -13,19 +13,15 @@ width: 832
 save_fps: 16
 batch_size: 1
 
-fsdp_size: 2
+fsdp_size: 4
 cp_size: 2
-use_context_parallel: False
-reshard_after_forward: null
+use_context_parallel: True
+reshard_after_forward: False
 weight_dtype: "bf16"
 save_with_dcp_api: False
 
-wandb_config:
-  project_name: "test_fsdp"
-  exp_name: "test_fsdp"
-
 model_config:
-  pretrained_model_dir_or_checkpoint: "/hdd/gyy/Wan2.1-T2V-1.3B"
+  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-1.3B/"
 
 scheduler_config:
   scheduler_name: "flow_matching"
@@ -34,11 +30,11 @@ scheduler_config:
   guidance_scale: 5.0
 
 vae_config:
-  vae_path: "/hdd/gyy/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
+  vae_path: "/mnt/data2/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
   dtype: "fp32"
 
 text_encoder_config:
   text_len: 512
-  checkpoint_path: "/hdd/gyy/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
-  text_tokenizer_path: "/hdd/gyy/Wan2.1-T2V-1.3B/google/umt5-xxl"
+  checkpoint_path: "/mnt/data2/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
+  text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-1.3B/google/umt5-xxl"
   use_fsdp: True

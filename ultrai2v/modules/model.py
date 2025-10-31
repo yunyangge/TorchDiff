@@ -6,7 +6,6 @@ import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
-from functools import partial
 
 from torch.distributed.tensor.parallel import (
     PrepareModuleInput,
@@ -471,6 +470,7 @@ class WanModel(ModelMixin, ConfigMixin):
         x, # [B C T H W]
         t, # [B]
         context, # [B N C]
+        **kwargs,
     ):
 
         # params
@@ -624,13 +624,6 @@ wan_cp_plan = {
 }
 
 if __name__ == "__main__":
-    if is_npu_available():
-        print("Use Ascend NPUs instead of Nvidia GPUs!")
-        import torch_npu
-        from torch_npu.contrib import transfer_to_npu
-        torch_npu.npu.config.allow_internal_format = False
-    else:
-        print("No available NPUs, so we use Nvidia GPUs or CPUs!")
     device = "cuda:0"
     dtype = torch.bfloat16
     model = WanModel().to(device=device, dtype=dtype)

@@ -3,11 +3,8 @@ import torch
 import torch.nn as nn
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.device_mesh import DeviceMesh
-from ultrai2v.utils.utils import is_npu_available
-if is_npu_available():
-    import torch_npu
-    from torch_npu.contrib import transfer_to_npu
-    torch_npu.npu.config.allow_internal_format = False
+from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
+check_and_import_npu()
 
 def CP_warpper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
     is_rank_zero = torch.distributed.get_rank() == 0

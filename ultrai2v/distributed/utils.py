@@ -52,7 +52,7 @@ def broadcast_tensor_list(tensors, group_src=0, group=None):
     if group is None:
         group = dist.group.WORLD
     group_rank = dist.get_rank(group)
-    device = torch.device("cuda")
+    device = torch.device(f"cuda:{torch.cuda.current_device()}")
     # broadcast tensor list length
     if group_rank == group_src:
         nums = torch.tensor(len(tensors), device=tensors[0].device, dtype=torch.int)
@@ -103,7 +103,7 @@ def gather_tensor_list_to_one(tensors, group_dst=0, group=None, active_ranks=Non
     if active_ranks is None:
         active_ranks = range(dist.get_world_size(group))
 
-    device = torch.device("cuda")
+    device = torch.device(f"cuda:{torch.cuda.current_device()}")
     gathered_tensors = []
     if group_rank == group_dst:
         for r in active_ranks:
@@ -135,7 +135,7 @@ def gather_tensor_list_to_one(tensors, group_dst=0, group=None, active_ranks=Non
                     if to_cpu: tensor = tensor.cpu()
                     gathered_tensors.append(tensor)
             else:
-                if to_cpu: tensors = tensors.cpu()
+                if to_cpu: tensors = [tensor.cpu() for tensor in tensors]
                 gathered_tensors.extend(tensors)
     elif group_rank in active_ranks:
         # send tensor list length

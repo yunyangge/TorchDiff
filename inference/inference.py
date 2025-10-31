@@ -6,6 +6,9 @@ from argparse import ArgumentParser
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 
+from ultrai2v.utils.utils import check_and_import_npu
+check_and_import_npu()
+
 from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
 from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
 from ultrai2v.distributed.tp_cp_warpper import CP_warpper
@@ -159,6 +162,7 @@ def main(config):
         prompts = f.readlines()
 
     dp_rank = torch.distributed.get_rank(dp_group)
+    dp_size = torch.distributed.get_world_size(dp_group)
     if cp_mesh is not None:
         cp_rank = torch.distributed.get_rank(cp_mesh.get_group()) 
         cp_size = torch.distributed.get_world_size(cp_mesh.get_group())
@@ -166,7 +170,7 @@ def main(config):
         cp_rank = 0
         cp_size = 1
     video_grid = []
-    for index in range(dp_rank * batch_size, len(prompts), batch_size * world_size):
+    for index in range(dp_rank * batch_size, len(prompts), batch_size * dp_size):
         batch_prompts = prompts[index: index + batch_size]
         videos = pipeline(
             prompt=batch_prompts,
@@ -184,16 +188,15 @@ def main(config):
     if len(video_grid) > 0:
         video_grid = torch.cat(video_grid, dim=0).to(device)
 
-    if len(prompts) < batch_size * world_size:
+    if len(prompts) < batch_size * dp_size:
         active_ranks = range(len(prompts) // batch_size)
     else:
-        active_ranks = range(world_size)
+        active_ranks = range(dp_size)
 
     active_ranks = [x * cp_size for x in active_ranks]
-
-    torch.distributed.barrier()
-    gathered_videos = gather_tensor_list_to_one(video_grid, group_dst=0, active_ranks=active_ranks)
-    torch.distributed.barrier()
+    # torch.distributed.barrier()
+    gathered_videos = gather_tensor_list_to_one([video_grid], group_dst=0, active_ranks=active_ranks)
+    # torch.distributed.barrier()
 
     if rank == 0:
         video_grid = torch.cat(gathered_videos, dim=0)

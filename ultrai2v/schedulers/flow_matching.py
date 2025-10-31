@@ -105,20 +105,22 @@ class FlowMatchingScheduler:
                 t = timesteps[i]
                 timestep = t.expand(latent_model_input_cond.shape[0]).to(latents.device)
 
-                noise_pred = model(
-                    latent_model_input_cond,
-                    timestep,
-                    model_kwargs.get('prompt_embeds'),
-                    **model_kwargs
-                )
-    
-                if self.do_classifier_free_guidance:
-                    noise_uncond = model(
-                        latent_model_input_uncond,
+                with torch.autocast("cuda", dtype=latents.dtype):
+                    noise_pred = model(
+                        latent_model_input_cond,
                         timestep,
-                        model_kwargs.get('negative_prompt_embeds'),
+                        model_kwargs.get('prompt_embeds'),
                         **model_kwargs
                     )
+    
+                if self.do_classifier_free_guidance:
+                    with torch.autocast("cuda", dtype=latents.dtype):
+                        noise_uncond = model(
+                            latent_model_input_uncond,
+                            timestep,
+                            model_kwargs.get('negative_prompt_embeds'),
+                            **model_kwargs
+                        )
                     noise_pred = noise_uncond + self.guidance_scale * (noise_pred - noise_uncond)
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self._step(noise_pred, latents, sigmas[i + 1] - sigmas[i])

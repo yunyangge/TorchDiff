@@ -443,7 +443,7 @@ def _t5(name,
         model = model_cls(**kwargs)
     
     # set device and dtype
-    model = model.to_empty(device=device)
+    model.to_empty(device=device)
     model = model.to(device=device, dtype=dtype)
 
     # init tokenizer

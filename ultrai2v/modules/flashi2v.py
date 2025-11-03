@@ -8,6 +8,7 @@ from torch.distributed.tensor.parallel import (
 from torch.distributed.tensor import Shard, Replicate
 from .want2v import (
     sinusoidal_embedding_1d,
+    rope_params,
     WanModel,
     WanAttentionBlock,
     WanSelfAttention,
@@ -15,11 +16,6 @@ from .want2v import (
     WanLayerNorm,
     WanRMSNorm,
 )
-
-def zero_initialize(module):
-    for param in module.parameters():
-        nn.init.zeros_(param)
-    return module
 
 class LearnableProj(nn.Module):
 
@@ -52,14 +48,12 @@ class LearnableProj(nn.Module):
                     padding=(1, 1, 1),
                 ),
                 nn.SiLU(),
-                zero_initialize(
-                    nn.Conv3d(
-                        proj_out_dim * 4, 
-                        proj_out_dim,
-                        kernel_size=(3, 3, 3),
-                        stride=(1, 1, 1),
-                        padding=(1, 1, 1)
-                    )
+                nn.Conv3d(
+                    proj_out_dim * 4, 
+                    proj_out_dim,
+                    kernel_size=(3, 3, 3),
+                    stride=(1, 1, 1),
+                    padding=(1, 1, 1)
                 )
             )
         else:
@@ -72,16 +66,23 @@ class LearnableProj(nn.Module):
                     padding=(0, 1, 1)
                 ),
                 nn.SiLU(),
-                zero_initialize(
-                    nn.Conv3d(
-                        proj_out_dim * 4, 
-                        proj_out_dim,
-                        kernel_size=(1, 3, 3),
-                        stride=(1, 1, 1),
-                        padding=(0, 1, 1)
-                    )
+                nn.Conv3d(
+                    proj_out_dim * 4, 
+                    proj_out_dim,
+                    kernel_size=(1, 3, 3),
+                    stride=(1, 1, 1),
+                    padding=(0, 1, 1)
                 )
             )
+
+    def init_weights(self):
+        nn.init.xavier_uniform_(self.proj[0].weight.flatten(1))
+        nn.init.zeros_(self.proj[0].bias)
+        nn.init.zeros_(self.proj[-1].weight)
+        nn.init.zeros_(self.proj[-1].bias)
+
+    def reset_parameters(self):
+        self.init_weights()
 
     def forward(self, x):
         return self.proj(x)
@@ -97,13 +98,11 @@ class FlashI2VModel(WanModel):
                 kernel_size=self.patch_size,
                 stride=self.patch_size
             ),
-            zero_initialize(
-                nn.Conv3d(
-                    in_channels=self.dim,
-                    out_channels=self.dim,
-                    kernel_size=(1, 1, 1),
-                    stride=(1, 1, 1)
-                )
+            nn.Conv3d(
+                in_channels=self.dim,
+                out_channels=self.dim,
+                kernel_size=(1, 1, 1),
+                stride=(1, 1, 1)
             )
         )
 
@@ -115,19 +114,47 @@ class FlashI2VModel(WanModel):
             conv3x3x3_proj=kwargs.get("conv3x3x3_proj", False),
         )
 
+        self.flashi2v_init_weights()
+
+    def init_weights(self):
+        return
+
+    # we use t2v model as initial weights, so set ignore_predictor as True
+    def flashi2v_init_weights(self):
+        super().init_weights()
+
+        nn.init.xavier_uniform_(self.fourier_embedding[0].weight.flatten(1))
+        nn.init.zeros_(self.fourier_embedding[0].bias)
+        nn.init.zeros_(self.fourier_embedding[-1].weight)
+        nn.init.zeros_(self.fourier_embedding[-1].bias)
+
+        self.learnable_proj.init_weights()
+
+    def reset_parameters(self):
+        self.flashi2v_init_weights()
+
     def forward(
         self,
         x, # [B C T H W]
         t, # [B]
         context, # [B N C]
         fourier_features, # [B C T H W]
-        start_frame_latents=None,
         **kwargs,
     ):
         # params
         device = self.patch_embedding.weight.device
-        if self.freqs.device != device:
-            self.freqs = self.freqs.to(device)
+
+        # maybe we use meta device for init, so rope freqs should init before forward
+        # buffers (don't use register_buffer otherwise dtype will be changed in to())
+        if self.freqs is None:
+            self.freqs = torch.cat(
+                [
+                    rope_params(1024, self.rope_d - 4 * (self.rope_d // 6)),
+                    rope_params(1024, 2 * (self.rope_d // 6)),
+                    rope_params(1024, 2 * (self.rope_d // 6)),
+                ],
+                dim=1,
+            ).to(device)
 
         # embeddings
         x = self.patch_embedding(x)

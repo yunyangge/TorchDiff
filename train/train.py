@@ -176,7 +176,7 @@ def main(config):
 
     log_on_main_process(logger, "Initializing diffusion model and scheduler...")
 
-    scheduler = schedulers[scheduler_config.pop("scheduler_name", "flow_matching")](**scheduler_config)
+    scheduler = schedulers[scheduler_config.get("scheduler_name", "flow_matching")](**scheduler_config)
 
     pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
     if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
@@ -184,8 +184,8 @@ def main(config):
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
     else:
         log_on_main_process(logger, f"Init model from scratch")
-        set_seed(seed, device_specific=False) # for init
-        model = models[model_name](**model_config)
+        with torch.device("meta"):
+            model = models[model_name](**model_config)
 
     if use_context_parallel and model.num_heads % cp_size != 0:
         raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
@@ -207,6 +207,10 @@ def main(config):
         reshard_after_forward=reshard_after_forward,
         cpu_offload=model_cpu_offload,
     )
+
+    model.to_empty(device=device)
+    set_seed(seed, device_specific=False) # for init
+    model.reset_parameters() # we should call reset_parameters because we init model at meta device 
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
     if gradient_checkpointing:
@@ -263,7 +267,7 @@ def main(config):
     
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
     # dataset
-    dataset = ultra_datasets[data_config.pop("dataset_name", "t2v_random")](**data_config.get("dataset_config", {}))
+    dataset = ultra_datasets[data_config.get("dataset_name", "t2v_random")](**data_config.get("dataset_config", {}))
     if use_context_parallel:
         video_shape = (
             dataset.sample_num_frames // (4 * model.patch_size[0]) + 1,
@@ -278,7 +282,7 @@ def main(config):
     batch_size = data_config.get("batch_size", 1)
     dp_size = dp_group.size() 
     consumed_samples = current_iteration * batch_size * gradient_accumulation_steps * dp_size
-    sampler = ultra_samplers[data_config.pop("sampler_name", "stateful_distributed")](
+    sampler = ultra_samplers[data_config.get("sampler_name", "stateful_distributed")](
         dataset, 
         num_replicas=dist.get_world_size(), # we use encoder cache, so num_replicas = world_size
         rank=dist.get_rank(), # we use encoder cache, so rank in dp_group is same as global rank
@@ -288,7 +292,7 @@ def main(config):
     )
     # dataloader
     num_workers = data_config.get("num_workers", 16)
-    collator = ultra_collators[data_config.pop("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
+    collator = ultra_collators[data_config.get("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -322,6 +326,10 @@ def main(config):
     Model has {params_nums_to_str(trainable_params_before_sharding)} trainable parameters and {params_nums_to_str(locked_params_before_sharding)} locked parameters
     After FSDP sharding,
     Model has {params_nums_to_str(trainable_params_after_sharding)} trainable parameters and {params_nums_to_str(locked_params_after_sharding)} locked parameters
+    Scheduler: {scheduler_config.get("scheduler_name", "flow_matching")}
+    Dataset: {data_config.get("dataset_name", "t2v_random")}
+    Sampler: {data_config.get("sampler_name", "stateful_distributed")}
+    Collator: {data_config.get("collator_name", "wan_t2v")}
     Use Context Parallel: {use_context_parallel}
     world_size: {world_size} GPUs
     dp_size: {dp_size} GPUs

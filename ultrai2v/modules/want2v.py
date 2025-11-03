@@ -444,15 +444,8 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
-        d = dim // num_heads
-        self.freqs = torch.cat(
-            [
-                rope_params(1024, d - 4 * (d // 6)),
-                rope_params(1024, 2 * (d // 6)),
-                rope_params(1024, 2 * (d // 6)),
-            ],
-            dim=1,
-        )
+        self.rope_d = dim // num_heads
+        self.freqs = None
 
         # cp dummy layers
         self.cp_input_layer = nn.Identity()
@@ -464,6 +457,9 @@ class WanModel(ModelMixin, ConfigMixin):
     def set_gradient_checkpointing(self, enabled = False):
         self.gradient_checkpointing = enabled 
 
+    def reset_parameters(self):
+        self.init_weights()
+
     def forward(
         self,
         x, # [B C T H W]
@@ -474,8 +470,18 @@ class WanModel(ModelMixin, ConfigMixin):
 
         # params
         device = self.patch_embedding.weight.device
-        if self.freqs.device != device:
-            self.freqs = self.freqs.to(device)
+
+        # maybe we use meta device for init, so rope freqs should init before forward
+        # buffers (don't use register_buffer otherwise dtype will be changed in to())
+        if self.freqs is None:
+            self.freqs = torch.cat(
+                [
+                    rope_params(1024, self.rope_d - 4 * (self.rope_d // 6)),
+                    rope_params(1024, 2 * (self.rope_d // 6)),
+                    rope_params(1024, 2 * (self.rope_d // 6)),
+                ],
+                dim=1,
+            ).to(device)
 
         # embeddings
         x = self.patch_embedding(x)

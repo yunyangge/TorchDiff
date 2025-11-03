@@ -608,7 +608,7 @@ def _video_vae(pretrained_path=None, z_dim=None, device='cuda', dtype=torch.floa
     # init model
     with torch.device('meta'):
         model = WanVAE_(**cfg)
-    model = model.to_empty(device=device)
+    model.to_empty(device=device)
     model = model.to(device=device, dtype=dtype)
 
     # load checkpoint

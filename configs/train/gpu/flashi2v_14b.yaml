@@ -15,29 +15,29 @@ gradient_checkpointing: True
 gradient_accumulation_steps: 1
 init_max_grad_norm: 1.0
 log_interval: 1
-save_interval: 20
+save_interval: 10
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
-save_with_dcp_api: False
+save_with_dcp_api: True
 
 wandb_config:
   project_name: "test_fsdp"
   exp_name: "test_fsdp"
 
 model_config:
-  dim: 1536
-  ffn_dim: 8960
+  dim: 5120
+  ffn_dim: 13824
   freq_dim: 256
   in_dim: 16
-  num_heads: 12
-  num_layers: 30
+  num_heads: 40
+  num_layers: 40
   out_dim: 16
-  text_len: 512
+  text_len": 512
   low_freq_energy_ratio: [0.05, 0.95]
   fft_return_abs: True
   conv3x3x3_proj: False
-  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors"
+  pretrained_model_dir_or_checkpoint: "/mnt/data2/Wan2.1-T2V-14B/diffusion_pytorch_model.safetensors"
 
 scheduler_config:
   scheduler_name: "flashi2v_flow_matching"
@@ -45,12 +45,12 @@ scheduler_config:
   use_logitnorm_time_sampling: True
 
 vae_config:
-  vae_path: "/mnt/data2/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
+  vae_path: "/mnt/data2/Wan2.1-T2V-14B/Wan2.1_VAE.pth"
   dtype: "fp32"
 
 text_encoder_config:
   text_len: 512
-  checkpoint_path: "/mnt/data2/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
+  checkpoint_path: "/mnt/data2/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth"
   use_fsdp: True
 
 data_config:
@@ -61,7 +61,7 @@ data_config:
   shuffle: True
   dataset_name: "i2v_random"
   dataset_config:
-    text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-1.3B/google/umt5-xxl"
+    text_tokenizer_path: "/mnt/data2/Wan2.1-T2V-14B/google/umt5-xxl"
     sample_height: 480
     sample_width: 832
     sample_num_frames: 49

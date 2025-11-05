@@ -200,8 +200,6 @@ def main(config):
     )
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
-    torch.cuda.empty_cache()
-
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
@@ -213,7 +211,6 @@ def main(config):
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
 
-    torch.cuda.empty_cache()
     # vae.to(device)
     # if not text_encoder_config.get("use_fsdp", False):
     #     text_encoder.to(device)
@@ -297,7 +294,6 @@ def main(config):
     # else:
     #     raise NotImplementedError(f"Training FlashI2V model must init with a pretrained t2v model, but pretrained_model_dir_or_checkpoint {pretrained_model_dir_or_checkpoint} does not exist!")
 
-    torch.cuda.empty_cache()
 
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
     learning_rate = optimizer_config.get("lr", 1e-4)

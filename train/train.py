@@ -154,7 +154,6 @@ def main(config):
     )
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
-    torch.cuda.empty_cache()
 
     log_on_main_process(logger, "Initializing text encoder model...")
     text_encoder = T5EncoderModel(
@@ -167,7 +166,6 @@ def main(config):
     )
     log_on_main_process(logger, f"Text encoder model initialized, memory allocated: {get_memory_allocated()} GiB")
 
-    torch.cuda.empty_cache()
     # vae.to(device)
     # if not text_encoder_config.get("use_fsdp", False):
     #     text_encoder.to(device)
@@ -238,6 +236,7 @@ def main(config):
         checkpointer.load_model(model, ema=True)
         ema_model.model_copy_to_ema(model)
         ema_model.restore(model)
+        load_pretrained_model = True
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
@@ -245,7 +244,9 @@ def main(config):
         ema_model.model_copy_to_ema(model)
         load_pretrained_model = True
 
-    torch.cuda.empty_cache()
+    if not load_pretrained_model:
+        log_on_main_process(f"warning! now we train from scratch, please make sure pretrained_model_dir_or_checkpoint={pretrained_model_dir_or_checkpoint} is correct!")
+
         
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")
     learning_rate = optimizer_config.get("lr", 1e-4)

@@ -290,14 +290,16 @@ def main(config):
         checkpointer.load_model(model, ema=True)
         ema_model.model_copy_to_ema(model)
         ema_model.restore(model)
+        load_pretrained_model = True
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
         load_pretrained_model = True
-    # else:
-    #     raise NotImplementedError(f"Training FlashI2V model must init with a pretrained t2v model, but pretrained_model_dir_or_checkpoint {pretrained_model_dir_or_checkpoint} does not exist!")
+    
+    if not load_pretrained_model:
+        raise NotImplementedError(f"Training FlashI2V model must init with a pretrained t2v model, but pretrained_model_dir_or_checkpoint {pretrained_model_dir_or_checkpoint} does not exist!")
 
 
     log_on_main_process(logger, "Initializing and loading optimizer checkpoint...")

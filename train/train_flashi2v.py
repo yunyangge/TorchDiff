@@ -28,9 +28,9 @@ from ultrai2v.distributed.utils import (
     set_modules_to_backward_prefetch, 
     gather_data_from_all_ranks
 )
-from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
+from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
 from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
-from ultrai2v.distributed.tp_cp_warpper import CP_warpper
+from ultrai2v.distributed.tp_cp_wrapper import CP_wrapper
 
 from ultrai2v.modules import (
     WanVAE, 
@@ -49,7 +49,7 @@ from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memor
 from ultrai2v.utils.clip_grads import AdaptiveGradClipper
 from ultrai2v.utils.encoder_cache import EncoderCacheManager
 
-class FlashI2VWarpper(nn.Module):
+class FlashI2VWrapper(nn.Module):
     def __init__(
         self, 
         model, 
@@ -222,11 +222,11 @@ def main(config):
     scheduler = schedulers[scheduler_config.get("scheduler_name", "flow_matching")](**scheduler_config)
 
     pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
-    load_pretrained_model = False
+    has_loaded_pretrained_model = False
     if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
     else:
         log_on_main_process(logger, f"Init model from scratch")
         with torch.device("meta"):
@@ -237,20 +237,20 @@ def main(config):
 
     model.train()
 
-    flashi2v_warpper = FlashI2VWarpper(
+    flashi2v_wrapper = FlashI2VWrapper(
         model=model, 
         scheduler=scheduler, 
         low_freq_energy_ratio=model_config.get("low_freq_energy_ratio", [0.05, 0.95]),
         fft_return_abs=model_config.get("fft_return_abs", True)
     )
 
-    # wrap model with cp warpper if use context parallel
+    # wrap model with cp wrapper if use context parallel
     if use_context_parallel:
-        CP_warpper(flashi2v_warpper, models_cp_plans[model_name], cp_mesh=cp_mesh)
+        CP_wrapper(flashi2v_wrapper, models_cp_plans[model_name], cp_mesh=cp_mesh)
 
-    # wrap model with fsdp2 mix-precision warpper
-    FSDP2_mix_warpper(
-        flashi2v_warpper,
+    # wrap model with fsdp2 mix-precision wrapper
+    FSDP2_mix_wrapper(
+        flashi2v_wrapper,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
@@ -260,9 +260,9 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
-    model = flashi2v_warpper.model
+    model = flashi2v_wrapper.model
 
-    if not load_pretrained_model:
+    if not has_loaded_pretrained_model:
         model.to_empty(device=device)
         set_seed(seed, device_specific=False) # for init
         model.reset_parameters() # we should call reset_parameters because we init model at meta device 
@@ -290,15 +290,15 @@ def main(config):
         checkpointer.load_model(model, ema=True)
         ema_model.model_copy_to_ema(model)
         ema_model.restore(model)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
     
-    if not load_pretrained_model:
+    if not has_loaded_pretrained_model:
         raise NotImplementedError(f"Training FlashI2V model must init with a pretrained t2v model, but pretrained_model_dir_or_checkpoint {pretrained_model_dir_or_checkpoint} does not exist!")
 
 
@@ -440,17 +440,17 @@ def main(config):
 
         current_batch_nums += 1
 
-        warpper_output = flashi2v_warpper(
+        wrapper_output = flashi2v_wrapper(
             latents=latents,
             start_frame_latents=start_frame_latents,
             text_embeddings=text_embeddings,
             weight_dtype=weight_dtype,
         )
 
-        model_output = warpper_output["model_output"]
-        prior_dist = warpper_output["prior_dist"]
-        latents = warpper_output["latents"]
-        sigmas = warpper_output["sigmas"]
+        model_output = wrapper_output["model_output"]
+        prior_dist = wrapper_output["prior_dist"]
+        latents = wrapper_output["latents"]
+        sigmas = wrapper_output["sigmas"]
 
         loss = scheduler.training_losses(model_output, latents, prior_dist)[0]
         loss = loss / gradient_accumulation_steps # default value of gradient_accumulation_steps is 1

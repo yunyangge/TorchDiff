@@ -8,7 +8,7 @@ from torch.distributed.fsdp import (
     fully_shard,
 )
 
-def FSDP2_mix_warpper(
+def FSDP2_mix_wrapper(
     model,
     dp_mesh=None,
     weight_dtype=torch.bfloat16,
@@ -77,7 +77,7 @@ def FSDP2_mix_warpper(
         logging.info(f"Model Overview: \n{model}")
 
 
-def FSDP2_fp32_warpper(
+def FSDP2_fp32_wrapper(
     model,
     dp_mesh=None,
     main_block=None,
@@ -150,7 +150,7 @@ if __name__ == "__main__":
     # ddp_fsdp_model.reset_parameters()
 
 
-    FSDP2_mix_warpper(
+    FSDP2_mix_wrapper(
         ddp_fsdp_model,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=dtype,
@@ -160,7 +160,7 @@ if __name__ == "__main__":
         cpu_offload=False,
     )
 
-    FSDP2_mix_warpper(
+    FSDP2_mix_wrapper(
         fsdp_model,
         dp_mesh=None,
         weight_dtype=dtype,

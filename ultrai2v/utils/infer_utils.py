@@ -55,7 +55,7 @@ def load_prompts(prompt):
         return [prompt]
 
 
-def load_images(image=None, dual_image=False, layout="CHW", array_type="PIL"):
+def load_images(image=None, dual_image=False, layout="CHW", array_type="torch"):
     if image is None:
         print("The input image is None, execute text to video task")
         return None

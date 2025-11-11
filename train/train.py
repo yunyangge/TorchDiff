@@ -26,9 +26,9 @@ from ultrai2v.distributed.utils import (
     set_modules_to_backward_prefetch, 
     gather_data_from_all_ranks
 )
-from ultrai2v.distributed.fsdp2_warpper import FSDP2_mix_warpper
+from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
 from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
-from ultrai2v.distributed.tp_cp_warpper import CP_warpper
+from ultrai2v.distributed.tp_cp_wrapper import CP_wrapper
 
 from ultrai2v.modules import (
     WanVAE, 
@@ -177,11 +177,11 @@ def main(config):
     scheduler = schedulers[scheduler_config.get("scheduler_name", "flow_matching")](**scheduler_config)
 
     pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
-    load_pretrained_model = False
+    has_loaded_pretrained_model = False
     if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
     else:
         log_on_main_process(logger, f"Init model from scratch")
         with torch.device("meta"):
@@ -192,12 +192,12 @@ def main(config):
 
     model.train()
 
-    # wrap model with cp warpper if use context parallel
+    # wrap model with cp wrapper if use context parallel
     if use_context_parallel:
-        CP_warpper(model, models_cp_plans[model_name], cp_mesh=cp_mesh)
+        CP_wrapper(model, models_cp_plans[model_name], cp_mesh=cp_mesh)
 
-    # wrap model with fsdp2 mix-precision warpper
-    FSDP2_mix_warpper(
+    # wrap model with fsdp2 mix-precision wrapper
+    FSDP2_mix_wrapper(
         model,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=weight_dtype,
@@ -208,7 +208,7 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
-    if not load_pretrained_model:
+    if not has_loaded_pretrained_model:
         model.to_empty(device=device)
         set_seed(seed, device_specific=False) # for init
         model.reset_parameters() # we should call reset_parameters because we init model at meta device 
@@ -236,15 +236,15 @@ def main(config):
         checkpointer.load_model(model, ema=True)
         ema_model.model_copy_to_ema(model)
         ema_model.restore(model)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint)
         log_on_main_process(logger, f"Load EMA model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
         ema_model.model_copy_to_ema(model)
-        load_pretrained_model = True
+        has_loaded_pretrained_model = True
 
-    if not load_pretrained_model:
+    if not has_loaded_pretrained_model:
         log_on_main_process(f"warning! now we train from scratch, please make sure pretrained_model_dir_or_checkpoint={pretrained_model_dir_or_checkpoint} is correct!")
 
         

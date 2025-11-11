@@ -1,9 +1,56 @@
 
 import torch
+from tqdm import tqdm
 
 from .flow_matching import FlowMatchingScheduler
 
 class FlashI2VFlowMatchingScheduler(FlowMatchingScheduler):
+
+    def sample(
+        self,
+        model,
+        latents,
+        **model_kwargs,
+    ):
+        num_inference_steps = self.num_inference_steps
+        sigmas = self._set_sigmas(training=False)
+        print(f"sigmas: {sigmas}")
+        timesteps = sigmas.clone() * 1000
+
+        assert model_kwargs.get("start_frame_latents", None) is not None, "When use flashi2v, start_frame_latents must be specified!"
+        assert latents.dtype == torch.float32, "Caused by latent shifting, initial precision of latents must be fp32!"
+
+        # for loop denoising to get clean latents
+        with tqdm(total=num_inference_steps, desc="Sampling") as progress_bar:
+            for i in range(num_inference_steps):
+                latent_model_input_cond, latent_model_input_uncond = self.get_latent_model_input(latents, **model_kwargs)
+                t = timesteps[i]
+                timestep = t.expand(latent_model_input_cond.shape[0]).to(latents.device)
+
+                # with torch.autocast("cuda", dtype=latents.dtype):
+                # flashi2v model use autocast internally
+                noise_pred = model(
+                    latent_model_input_cond,
+                    timestep,
+                    model_kwargs.get('prompt_embeds'),
+                    **model_kwargs
+                )
+    
+                if self.do_classifier_free_guidance:
+                    # with torch.autocast("cuda", dtype=latents.dtype):
+                    # flashi2v model use autocast internally
+                    noise_uncond = model(
+                        latent_model_input_uncond,
+                        timestep,
+                        model_kwargs.get('negative_prompt_embeds'),
+                        **model_kwargs
+                    )
+                    noise_pred = noise_uncond + self.guidance_scale * (noise_pred - noise_uncond)
+                # compute the previous noisy sample x_t -> x_t-1
+                latents = self._step(noise_pred, latents, sigmas[i + 1] - sigmas[i])
+                progress_bar.update()
+        
+        return latents
 
     def interpolation(
         self,
@@ -24,17 +71,6 @@ class FlashI2VFlowMatchingScheduler(FlowMatchingScheduler):
 
         return interpolated_latents
 
-
-    def get_latent_model_input(self, latents, **kwargs):
-        start_frame_latents = kwargs.get("start_frame_latents", None)
-        fourier_features = kwargs.get("fourier_features", None)
-        if start_frame_latents is None or fourier_features is None:
-            raise ValueError("In flashi2v flow, start_frame_latents and fourier_features must be specified!")
-        latent_model_input_cond = latent_model_input_uncond = latents - start_frame_latents
-        latent_model_input_cond = torch.cat([latent_model_input_cond, fourier_features], dim=1)
-        latent_model_input_uncond = torch.cat([latent_model_input_uncond, fourier_features], dim=1)
-
-        return latent_model_input_cond, latent_model_input_uncond
 
     def q_sample(
         self, 

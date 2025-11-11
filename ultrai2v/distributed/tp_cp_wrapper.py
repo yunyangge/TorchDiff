@@ -6,7 +6,7 @@ check_and_import_npu()
 from torch.distributed.tensor.parallel import parallelize_module
 from torch.distributed.device_mesh import DeviceMesh
 
-def CP_warpper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
+def CP_wrapper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
     is_rank_zero = torch.distributed.get_rank() == 0
     if is_rank_zero:
         logging.info("Parallelize Module with Context Parallel...")
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     # cp_model = models[model_name].from_pretrained(pretrained_model_dir).to(device=device, dtype=dtype)
     cp_model = models[model_name]().to(device=device, dtype=dtype)
 
-    CP_warpper(cp_model, models_cp_plans[model_name], cp_mesh=ddp_cp_mesh["cp"])
+    CP_wrapper(cp_model, models_cp_plans[model_name], cp_mesh=ddp_cp_mesh["cp"])
 
     with torch.no_grad():
         ddp_output = ddp_model(latents, timesteps, text_embeddings, start_frame_latents=start_frame_latents, fourier_features=fourier_features)

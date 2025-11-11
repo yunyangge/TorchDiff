@@ -3,6 +3,7 @@ import yaml
 from argparse import ArgumentParser
 
 import torch
+import torch.nn as nn
 from ultrai2v.utils.utils import check_and_import_npu
 check_and_import_npu()
 
@@ -27,7 +28,57 @@ from ultrai2v.utils.utils import str_to_precision, get_memory_allocated
 from ultrai2v.utils.log_utils import get_logger, log_on_main_process
 from ultrai2v.pipelines import pipelines
 from ultrai2v.utils.infer_utils import load_prompts, load_images, save_videos, save_video_grid
+from ultrai2v.utils.filter import HighFrequencyExtractor
 from ultrai2v.utils.random_utils import set_seed
+
+class FlashI2VWrapper(nn.Module):
+    def __init__(
+        self, 
+        model, 
+        scheduler,
+        low_freq_energy_ratio=[0.05, 0.95],
+        fft_return_abs=True,
+    ):
+        super().__init__()
+        self.model = model
+        self.scheduler = scheduler
+        self.high_freq_extractor = HighFrequencyExtractor(
+            low_freq_energy_ratio=low_freq_energy_ratio,
+            return_abs=fft_return_abs,
+        )
+
+    def forward(
+        self,
+        latents,
+        timesteps,
+        text_embeddings,
+        start_frame_latents,
+        fourier_features=None,
+        start_frame_latents_proj=None,
+        **kwargs,
+    ):
+        weight_dtype = text_embeddings.dtype
+
+        if fourier_features is None or start_frame_latents_proj is None:
+            fourier_features = self.high_freq_extractor(start_frame_latents.squeeze(2)).unsqueeze(2)
+            fourier_features = fourier_features.repeat(1, 1, latents.shape[2], 1, 1)
+            fourier_features = fourier_features.to(weight_dtype)
+
+            start_frame_latents_proj = self.model.learnable_proj(start_frame_latents)
+            assert start_frame_latents_proj.dtype == torch.float32
+
+        latents = latents - start_frame_latents_proj
+
+        with torch.autocast("cuda", dtype=weight_dtype):
+            model_output = self.model(
+                latents.to(weight_dtype),
+                timesteps,
+                text_embeddings,
+                fourier_features=fourier_features,
+            )
+
+        return model_output
+
 
 def main(config):
     logger = get_logger()
@@ -46,6 +97,7 @@ def main(config):
     pipeline_name = config.get("pipeline_name", "t2v")
     weight_dtype = config.get("weight_dtype", "bfloat16")
     prompt_txt = config.get("prompt_txt", None)
+    image_txt = config.get("image_txt", None)
     batch_size = config.get("batch_size", 1)
     num_frames = config.get("num_frames", 49)
     height = config.get("height", 480)
@@ -120,10 +172,12 @@ def main(config):
 
     scheduler = schedulers[scheduler_config.pop("scheduler_name", "flow_matching")](**scheduler_config)
 
+    has_loaded_pretrained_model = False
     pretrained_model_dir_or_checkpoint = model_config.get("pretrained_model_dir_or_checkpoint", None)
     if pretrained_model_dir_or_checkpoint is not None and os.path.isdir(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_dir {pretrained_model_dir_or_checkpoint}")
         model = models[model_name].from_pretrained(pretrained_model_dir_or_checkpoint)
+        has_loaded_pretrained_model = True
     elif pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Init model from scratch")
         with torch.device("meta"):
@@ -135,14 +189,20 @@ def main(config):
         raise ValueError(f"When using context parallel, num_heads {model.num_heads} mush be mutiple of cp_size {cp_size}!")
     
     model.eval()
+    flashi2v_wrapper = FlashI2VWrapper(
+        model=model,
+        scheduler=scheduler,
+        low_freq_energy_ratio=model_config.get("low_freq_energy_ratio", 0.1),
+        fft_return_abs=model_config.get("fft_return_abs", True)
+    )
 
     # wrap model with cp wrapper if use context parallel
     if use_context_parallel:
-        CP_wrapper(model, models_cp_plans[model_name], cp_mesh=cp_mesh)
+        CP_wrapper(flashi2v_wrapper, models_cp_plans[model_name], cp_mesh=cp_mesh)
 
     # wrap model with fsdp2 mix-precision wrapper
     FSDP2_mix_wrapper(
-        model,
+        flashi2v_wrapper,
         dp_mesh=ddp_fsdp_mesh,
         weight_dtype=weight_dtype,
         main_block_to_half=models_main_block[model_name],
@@ -152,22 +212,29 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
-
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
+
+    if not has_loaded_pretrained_model:
+        model.to_empty(device=device)
+        set_seed(seed, device_specific=False) # for init
+        model.reset_parameters() # we should call reset_parameters because we init model at meta device 
 
     if pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")
-        Checkpointer.load_model_from_path(model, pretrained_model_dir_or_checkpoint, dcp_api=save_with_dcp_api)
+        Checkpointer.load_model_from_path(flashi2v_wrapper.model, pretrained_model_dir_or_checkpoint, dcp_api=save_with_dcp_api)
 
     pipeline = pipelines[pipeline_name](
         vae=vae,
         tokenizer=tokenizer,
         text_encoder=text_encoder,
-        predictor=model,
+        predictor=flashi2v_wrapper,
         scheduler=scheduler
     )
 
     prompts = load_prompts(prompt_txt)
+    conditional_images = load_images(image_txt)
+
+    assert len(prompts) == len(conditional_images), "In I2V mode, prompts num must be equal to conditional images num."
 
     set_seed(seed, device_specific=True, process_group=dp_group)
 
@@ -182,8 +249,10 @@ def main(config):
     video_grid = []
     for index in range(dp_rank * batch_size, len(prompts), batch_size * dp_size):
         batch_prompts = prompts[index: index + batch_size]
+        batch_images = conditional_images[index: index + batch_size]
         videos = pipeline(
             prompt=batch_prompts,
+            conditional_image=batch_images,
             num_frames=num_frames,
             height=height,
             width=width,
@@ -192,6 +261,7 @@ def main(config):
             device=device
         )
         if cp_rank == 0:
+            print(f"save index {index}")
             save_videos(videos, index, output_dir, save_fps)
             video_grid.append(videos)
 

@@ -3,11 +3,11 @@
 model_name: "flashi2v"
 seed: 1024
 
-output_dir: "output/test_flashi2v"
+output_dir: "/work/share1/checkpoint/gyy/flashi2v_14b"
 
 training_iteration: 1000000
 # ddp_size: 1
-fsdp_size: 8
+fsdp_size: 16
 cp_size: 2
 use_context_parallel: True
 reshard_after_forward: null
@@ -15,15 +15,15 @@ gradient_checkpointing: True
 gradient_accumulation_steps: 1
 init_max_grad_norm: 1.0
 log_interval: 1
-save_interval: 2
+save_interval: 1000
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
 save_with_dcp_api: True
 
 wandb_config:
-  project_name: "test_flashi2v"
-  exp_name: "test_flashi2v"
+  project_name: "flashi2v"
+  exp_name: "flashi2v_14b_49x480x832_bs16x4_fsdp16_cp2_lr2e-5"
 
 model_config:
   dim: 5120
@@ -66,7 +66,7 @@ data_config:
     text_drop_ratio: 0.1
     sample_height: 480
     sample_width: 832
-    sample_num_frames: 17
+    sample_num_frames: 49
     train_fps: 16
     tokenizer_max_length: 512
     return_prompt_mask: True

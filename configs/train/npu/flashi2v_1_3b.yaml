@@ -1,9 +1,9 @@
 # test yaml
 
-model_name: "wan_t2v"
+model_name: "flashi2v"
 seed: 1024
 
-output_dir: "/work/share1/checkpoint/gyy/wan_t2v_fsdp_cp_test"
+output_dir: "/work/share1/checkpoint/gyy/flashi2v_1_3b"
 
 training_iteration: 1000000
 # ddp_size: 1
@@ -19,17 +19,28 @@ save_interval: 1000
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
-save_with_dcp_api: False
+save_with_dcp_api: True
 
 wandb_config:
-  project_name: "test_train_fsdp_cp_npu"
-  exp_name: "want2v_1_3b_49x480x832_bs16x4_fsdp8_cp2_lr2e-5"
+  project_name: "flashi2v"
+  exp_name: "flashi2v_1_3b_49x480x832_bs16x4_fsdp16_cp2_lr2e-5"
 
 model_config:
-  pretrained_model_dir_or_checkpoint: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/"
+  dim: 1536
+  ffn_dim: 8960
+  freq_dim: 256
+  in_dim: 16
+  num_heads: 12
+  num_layers: 30
+  out_dim: 16
+  text_len: 512
+  low_freq_energy_ratio: [0.05, 0.95]
+  fft_return_abs: True
+  conv3x3x3_proj: False
+  pretrained_model_dir_or_checkpoint: "/work/share/projects/gyy/UltraI2V/want2v_1_3b.pt"
 
 scheduler_config:
-  scheduler_name: "flow_matching"
+  scheduler_name: "flashi2v_flow_matching"
   use_dynamic_shifting: True
   use_logitnorm_time_sampling: True
 
@@ -48,10 +59,10 @@ data_config:
   pin_memory: False
   drop_last: True
   shuffle: True
-  dataset_name: "wan_t2v"
+  dataset_name: "flashi2v"
   dataset_config:
-    metafile_or_dir_path: "/work/share1/caption/osp/lmdb/resi2v_2m/filtered_samples_1858822.lmdb"
-    text_tokenizer_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl/"
+    metafile_or_dir_path: "/work/share1/caption/osp/lmdb/all_videos_720p/filtered_samples_3928666.lmdb"
+    text_tokenizer_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl"
     text_drop_ratio: 0.1
     sample_height: 480
     sample_width: 832
@@ -60,8 +71,8 @@ data_config:
     tokenizer_max_length: 512
     return_prompt_mask: True
   sampler_name: "stateful_distributed"
-  collator_name: "wan_t2v"
+  collator_name: "flashi2v"
   
 optimizer_config:
-  lr: 0.00002 # 2e-5
+  lr: 0.00002
   weight_decay: 0.01

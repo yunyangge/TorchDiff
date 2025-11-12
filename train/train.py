@@ -305,7 +305,7 @@ def main(config):
         collate_fn=collator,
         num_workers=num_workers,
         pin_memory=data_config.get("pin_memory", False),
-        # worker_init_fn=get_seed_worker(seed, num_workers=num_workers, device_specific=True),
+        generator=torch.Generator().manual_seed(seed + rank) # make sure all workers have different random patterns because we use encoder cache
     )
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 

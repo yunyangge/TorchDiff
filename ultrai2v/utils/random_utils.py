@@ -45,30 +45,3 @@ def set_seed(
             torch_npu.npu.manual_seed_all(seed)
             torch_npu.npu.manual_seed(seed)
     return seed
-
-def get_seed_worker(
-    seed: int, 
-    num_workers: int = 16,
-    device_specific: bool = False, 
-    process_group: dist.ProcessGroup = None,
-):
-    """Deterministic dataloader"""
-    if device_specific:
-        if process_group is None:
-            if not dist.is_initialized():
-                raise ValueError("`device_specific` can only be set to `True` when using distributed.")
-            process_group = dist.group.WORLD
-        rank = dist.get_rank(process_group)
-
-    def seed_worker(worker_id):
-        if device_specific:
-            worker_seed = seed + rank * num_workers + worker_id # make sure all workers have different seed
-        else:
-            worker_seed = seed
-        # print(f"rank = {rank}, worker_seed = {worker_seed}")
-        np.random.seed(worker_seed)
-        os.environ["PYTHONHASHSEED"] = str(worker_seed)
-        torch.manual_seed(worker_seed)
-        random.seed(worker_seed)
-
-    return seed_worker

@@ -14,6 +14,7 @@ from torch.distributed.tensor import DTensor
 from argparse import ArgumentParser
 
 from torch.utils.data import DataLoader
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
 from ultrai2v.data.utils.utils import cyclic_iter
@@ -298,7 +299,7 @@ def main(config):
     # dataloader
     num_workers = data_config.get("num_workers", 16)
     collator = ultra_collators[data_config.get("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
-    dataloader = DataLoader(
+    dataloader = StatefulDataLoader(
         dataset,
         batch_size=batch_size,
         sampler=sampler,
@@ -307,6 +308,11 @@ def main(config):
         pin_memory=data_config.get("pin_memory", False),
         generator=torch.Generator().manual_seed(seed + rank) # make sure all workers have different random patterns because we use encoder cache
     )
+
+    if checkpointer.last_training_iteration is not None:
+        log_on_main_process(logger, "Loading dataloader state...")
+        checkpointer.load_dataloader_state_dict()
+
     encoder_cache_manager = EncoderCacheManager(tp_cp_group=cp_mesh.get_group() if use_context_parallel else None)
 
     trainable_params_before_sharding = trainable_params_after_sharding = 0
@@ -372,6 +378,9 @@ def main(config):
             video = batch.pop(VIDEO, None).to(dtype=torch.float32, device=device)
             prompt_ids = batch.pop(PROMPT_IDS, None).to(device=device)
             prompt_mask = batch.pop(PROMPT_MASK, None).to(device=device)
+            if rank == 0:
+                drop_text = batch.pop("drop_text")
+                print(f"drop_text: {drop_text}")
             
             start_frame = batch.pop(START_FRAME, None).to(dtype=torch.float32, device=device) if "i2v" in task else None
             with torch.no_grad():

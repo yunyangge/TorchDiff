@@ -9,11 +9,13 @@ class WanDataCollator:
         video = torch.stack([i[VIDEO] for i in batch]) if batch[0][VIDEO] is not None else None # in evaluation mode, we have no video gt.
         prompt_ids = torch.cat([i[PROMPT_IDS] for i in batch])
         prompt_mask = torch.cat([i[PROMPT_MASK] for i in batch]) if batch[0][PROMPT_MASK] is not None else None
+        drop_text = [i["drop_text"] for i in batch]
 
         return {
             VIDEO: video,
             PROMPT_IDS: prompt_ids,
-            PROMPT_MASK: prompt_mask
+            PROMPT_MASK: prompt_mask,
+            "drop_text": drop_text
         }
     
 class FlashI2VDataCollator:

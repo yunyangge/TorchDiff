@@ -17,12 +17,14 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.tensor import distribute_tensor, DTensor
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 from ultrai2v.utils.utils import is_npu_available
 
 MODEL_CHECKPOINT = "model_state_dict.pt"
 OPTIM_CHECKPOINT = "optim_state_dict.pt"
 RNG_CHECKPOINT_DIR = "random_states"
+DATALOADER_CHECKPOINT_DIR = "dataloader_states"
 PARAMS = "params"
 PREFIX = "iter_"
 
@@ -238,6 +240,12 @@ class Checkpointer:
             }
         else:
             return {}
+
+    def load_dataloader_state_dict(self, dataloader):
+        assert isinstance(dataloader, StatefulDataLoader), "only StatefulDataLoader has state."
+        last_dataloader_checkpoint_dir = (
+            f"{self.save_root_dir}/{PREFIX}{self.last_training_iteration:09d}/{DATALOADER_CHECKPOINT_DIR}"
+        )
         
     def load_rng_state_dict(self):
         last_rng_checkpoint_dir = (

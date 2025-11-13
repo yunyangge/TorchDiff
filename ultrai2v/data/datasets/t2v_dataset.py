@@ -18,6 +18,7 @@ T2VOutputData = {
     PROMPT_IDS: None,
     PROMPT_MASK: None,
     VIDEO: None,
+    "drop_text": False
 }
 
 class WanT2VDataset(Dataset):
@@ -152,6 +153,7 @@ class T2VRandomDataset(Dataset):
         text = ""
         examples[PROMPT_IDS], examples[PROMPT_MASK] = self.get_text_data(text)
         examples[VIDEO] = torch.randn(3, self.sample_num_frames, self.sample_height, self.sample_width)
+        examples["drop_text"] = random.random() > 0.5
         return examples
 
     def get_text_data(self, text):

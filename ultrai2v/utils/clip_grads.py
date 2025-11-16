@@ -5,6 +5,8 @@ import warnings
 import types
 from ultrai2v.distributed.utils import gather_data_from_all_ranks
 
+GRAD_NORM_INF = 1000.0
+
 class AdaptiveGradClipper:
     def __init__(self, clip_grad_ema_decay: float = 0.99, init_max_grad_norm: float = 1.0, model_parallel_group=None):
         self.clip_grad_ema_decay = clip_grad_ema_decay
@@ -80,12 +82,11 @@ class AdaptiveGradClipper:
         return (moving_avg_max_grad_norm - grad_norm_before_clip) ** 2
 
     # in first iteration, initialize moving averages
-    def init_weights(self):
-        self.moving_avg_max_grad_norm = self.max_grad_norm
+    def init_weights(self, grad_norm_before_clip_first_step):
+        self.moving_avg_max_grad_norm = min(self.max_grad_norm, grad_norm_before_clip_first_step * 3)
         self.moving_avg_max_grad_norm_var = 0.0
         self.max_grad_norm = self.get_max_grad_norm(self.moving_avg_max_grad_norm, self.moving_avg_max_grad_norm_var)
         self.max_grad_norm_var = 0.0
-
 
     def adaptive_clip(self, parameters):
         if isinstance(parameters, torch.Tensor):
@@ -101,7 +102,9 @@ class AdaptiveGradClipper:
                 )
         grads_for_norm = [p.grad for p in parameters if p.grad is not None]
         if self.moving_avg_max_grad_norm < -1:
-            self.init_weights()
+            grad_norm_before_clip_first_step = torch.nn.utils.clip_grad_norm_(parameters, GRAD_NORM_INF, error_if_nonfinite=True).item()
+            grad_norm_before_clip_first_step = gather_data_from_all_ranks(torch.tensor([grad_norm_before_clip_first_step ** 2], device=self.device), group=self.model_parallel_group).sum().item() ** 0.5
+            self.init_weights(grad_norm_before_clip_first_step)
         else:
            self.max_grad_norm = self.get_max_grad_norm(self.moving_avg_max_grad_norm, self.moving_avg_max_grad_norm_var)
         grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(parameters, self.max_grad_norm, error_if_nonfinite=True).item()

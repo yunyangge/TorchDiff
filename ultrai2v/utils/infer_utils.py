@@ -16,6 +16,11 @@ def save_videos(videos, start_index, save_path, fps):
         imageio.mimwrite(save_path, videos, fps=fps, quality=6)
     else:
         raise ValueError("The video must be in either [b, t, h, w, c] or [t, h, w, c] format.")
+    
+def save_video_with_name(video, name, save_path, fps):
+    os.makedirs(save_path, exist_ok=True)
+    save_path = os.path.join(save_path, f"{name}.mp4")
+    imageio.mimwrite(save_path, video, fps=fps, quality=6)
 
 def save_video_grid(videos, save_path, fps, nrow=None):
     b, t, h, w, c = videos.shape

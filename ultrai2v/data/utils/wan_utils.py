@@ -354,7 +354,6 @@ class WanImageProcessor(AbstractDataProcessor):
         self.sample_height = sample_height
         self.sample_width = sample_width
 
-    
         self.image_transforms = Compose(
             [
                 CenterCropResizeVideo((self.sample_height, self.sample_width), interpolation_mode='bicubic', align_corners=False, antialias=True),
@@ -363,6 +362,7 @@ class WanImageProcessor(AbstractDataProcessor):
             ]
         )
         
+        print(f'image_transforms: \n {self.image_transforms}')
 
     def read_one_sample(self, path, meta_info=None):
         sample = self.image_reader(path, self.image_layout_type).load_image()

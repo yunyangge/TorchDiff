@@ -10,15 +10,21 @@ import copy
 from torch.utils.data import Dataset
 import numpy as np
 from transformers import AutoTokenizer
-from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK, START_FRAME
+from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
 from ultrai2v.data.utils.utils import LMDBReader
-from ultrai2v.data.datasets.t2v_dataset import WanT2VDataset, T2VRandomDataset
+from ultrai2v.data.datasets.t2v_dataset import WanT2VDataset, T2VRandomDataset, T2VEvalDataset
 
 FlashI2VOutputData = {
     PROMPT_IDS: None,
     PROMPT_MASK: None,
     START_FRAME: None,
     VIDEO: None,
+}
+
+I2VEvalOutputData = {
+    PROMPT: None,
+    START_FRAME: None,
+    NAME_INDEX: None,
 }
 
 class FlashI2VDataset(WanT2VDataset):
@@ -70,7 +76,27 @@ class I2VRandomDataset(T2VRandomDataset):
         examples[START_FRAME] = orig_video[:, 0:1, :, :].clone()
         return examples
 
+class I2VEvalDataset(T2VEvalDataset):
+    def getitem(self, index):
+        video_index = index // self.num_samples_per_prompt
+        local_index = index % self.num_samples_per_prompt
+        examples = copy.deepcopy(I2VEvalOutputData)
+        meta_info = self.dataset_reader.getitem(video_index)
+        text = meta_info["cap"]
+        item_path = meta_info["path"]
+        examples[PROMPT] = self.get_text_data(text)
+        examples[START_FRAME] = self.get_visual_data(item_path, meta_info)
+        examples[NAME_INDEX] = f"video_{video_index:06d}_{local_index:06d}"
+        return examples
+    
+    def get_visual_data(self, path, meta_info):
+        visual = self.visual_processor(path, meta_info, need_processing=False)
+        visual = visual[0] # only use the start frame
+        return visual
+
+
 dataset = {
     'flashi2v': FlashI2VDataset,
-    'i2v_random': I2VRandomDataset
+    'i2v_random': I2VRandomDataset,
+    'i2v_eval': I2VEvalDataset,
 }

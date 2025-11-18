@@ -366,15 +366,19 @@ class WanImageProcessor(AbstractDataProcessor):
 
     def read_one_sample(self, path, meta_info=None):
         sample = self.image_reader(path, self.image_layout_type).load_image()
-        # add T dimension
-        if self.image_layout_type == "CHW":
-            sample = sample.unsqueeze(1)
-        elif self.image_layout_type == "HWC":
-            sample = sample.unsqueeze(0)
         return sample
 
     def process_one_sample(self, sample):
-        sample = self.image_transforms(sample)
+        if self.image_layout_type == "CHW":
+            # add T dimension
+            sample = sample.unsqueeze(1)
+            sample = self.image_transforms(sample)
+        elif self.image_layout_type == "HWC":
+            sample = sample.unsqueeze(0)
+            sample = sample.permute(0, 3, 1, 2) # (1 H W C) -> (1 C H W)
+            sample = self.image_transforms(sample)
+            sample = sample.permute(0, 2, 3, 1) # (1 C H W) -> (1 H W C)
+        return sample
 
     def __call__(self, image_path, meta_info=None, need_processing=True):
         sample = self.read_one_sample(image_path, meta_info)

@@ -10,10 +10,8 @@ import copy
 import numpy as np
 from transformers import AutoTokenizer
 from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, NAME_INDEX
-from ultrai2v.data.utils.image_reader import is_image_file
-from ultrai2v.data.utils.video_reader import is_video_file
 from ultrai2v.data.utils.utils import LMDBReader
-from ultrai2v.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor, WanImageProcessor
+from ultrai2v.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor
 from ultrai2v.data.datasets.base_dataset import BaseDataset
 
 T2VOutputData = {
@@ -180,8 +178,6 @@ class T2VEvalDataset(BaseDataset):
         self.dataset_reader = LMDBReader(metafile_or_dir_path)
         self.data_length = len(self.dataset_reader)
         print(f'Build T2VEvalDataset, data length: {self.data_length}...')
-        self.is_image = is_image_file(self.dataset_reader.getitem(0)["path"])
-        self.is_video = is_video_file(self.dataset_reader.getitem(0)["path"])
 
         self.sample_height = sample_height
         self.sample_width = sample_width
@@ -191,26 +187,6 @@ class T2VEvalDataset(BaseDataset):
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.timeout = kwargs.get("timeout", 60) 
-
-        if self.is_video:
-            print(f"Using video mode, sample_height: {self.sample_height}, sample_width: {self.sample_width}, sample_num_frames: {self.sample_num_frames}")
-            self.visual_processor = WanVideoProcessor(
-                video_layout_type='THWC',
-                sample_height=self.sample_height,
-                sample_width=self.sample_width,
-                sample_num_frames=self.sample_num_frames,
-                train_fps=self.train_fps,
-                force_cut_video_from_start=True,
-            )
-        elif self.is_image:
-            print(f"Using image mode, sample_height: {self.sample_height}, sample_width: {self.sample_width}")
-            self.visual_processor = WanImageProcessor(
-                image_layout_type='HWC',
-                sample_height=self.sample_height,
-                sample_width=self.sample_width,
-            )
-        else:
-            raise ValueError("Must specify either video or image")
 
     def __getitem__(self, index):
         # try:

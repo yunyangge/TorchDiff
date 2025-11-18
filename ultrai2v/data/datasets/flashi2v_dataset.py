@@ -12,7 +12,10 @@ import numpy as np
 from transformers import AutoTokenizer
 from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
 from ultrai2v.data.utils.utils import LMDBReader
+from ultrai2v.data.utils.image_reader import is_image_file
+from ultrai2v.data.utils.video_reader import is_video_file
 from ultrai2v.data.datasets.t2v_dataset import WanT2VDataset, T2VRandomDataset, T2VEvalDataset
+from ultrai2v.data.utils.wan_utils import WanVideoProcessor, WanImageProcessor
 
 FlashI2VOutputData = {
     PROMPT_IDS: None,
@@ -77,6 +80,49 @@ class I2VRandomDataset(T2VRandomDataset):
         return examples
 
 class I2VEvalDataset(T2VEvalDataset):
+    def __init__(
+        self,
+        metafile_or_dir_path,
+        sample_height=480,
+        sample_width=832,
+        sample_num_frames=49,
+        train_fps=16,
+        num_samples_per_prompt=1,
+        **kwargs,
+    ):
+        super().__init__(
+            metafile_or_dir_path,
+            sample_height=sample_height,
+            sample_width=sample_width,
+            sample_num_frames=sample_num_frames,
+            train_fps=train_fps,
+            num_samples_per_prompt=num_samples_per_prompt,
+            **kwargs,
+        )
+
+        self.is_image = is_image_file(self.dataset_reader.getitem(0)["path"])
+        self.is_video = is_video_file(self.dataset_reader.getitem(0)["path"])
+
+        if self.is_video:
+            print(f"Using video mode, sample_height: {self.sample_height}, sample_width: {self.sample_width}, sample_num_frames: {self.sample_num_frames}")
+            self.visual_processor = WanVideoProcessor(
+                video_layout_type='TCHW',
+                sample_height=self.sample_height,
+                sample_width=self.sample_width,
+                sample_num_frames=self.sample_num_frames,
+                train_fps=self.train_fps,
+                force_cut_video_from_start=True,
+            )
+        elif self.is_image:
+            print(f"Using image mode, sample_height: {self.sample_height}, sample_width: {self.sample_width}")
+            self.visual_processor = WanImageProcessor(
+                image_layout_type='CHW',
+                sample_height=self.sample_height,
+                sample_width=self.sample_width,
+            )
+        else:
+            raise ValueError("Must specify either video or image")
+
     def getitem(self, index):
         video_index = index // self.num_samples_per_prompt
         local_index = index % self.num_samples_per_prompt
@@ -91,7 +137,8 @@ class I2VEvalDataset(T2VEvalDataset):
     
     def get_visual_data(self, path, meta_info):
         visual = self.visual_processor(path, meta_info, need_processing=False)
-        visual = visual[0] # only use the start frame
+        if self.is_video:
+            visual = visual[0] # only use the start frame
         return visual
 
 

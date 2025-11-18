@@ -210,7 +210,7 @@ class TorchvisionVideo(Video):
     def _get_batch(self, frame_indices: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         video_data = self.vframes[frame_indices]
         
-        if self.layout == "numpy":
+        if self.array_type == "numpy":
             video_data = video_data.numpy()
         return video_data
 
@@ -231,7 +231,7 @@ class AvVideo(Video):
     def _get_batch(self, frame_indices: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
         video_data = self.vframes[frame_indices]
         
-        if self.layout == "numpy":
+        if self.array_type == "numpy":
             video_data = video_data.numpy()
         return video_data
 

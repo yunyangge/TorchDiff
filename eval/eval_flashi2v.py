@@ -1,4 +1,3 @@
-from cmd import PROMPT
 import os
 import yaml
 import math
@@ -6,7 +5,6 @@ from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
-from ultrai2v.utils.constant import NAME_INDEX, START_FRAME
 from ultrai2v.utils.utils import check_and_import_npu
 check_and_import_npu()
 
@@ -14,6 +12,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 from torchdata.stateful_dataloader import StatefulDataLoader
 
+from ultrai2v.utils.constant import PROMPT, START_FRAME, NAME_INDEX
 from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
 from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
 from ultrai2v.distributed.tp_cp_wrapper import CP_wrapper
@@ -240,12 +239,11 @@ def main(config):
             dataset.sample_height // (8 * model.patch_size[1]),
             dataset.sample_width // (8 * model.patch_size[2]),
         )
-        text_len = dataset.text_max_length
+        text_len = 512
         if math.prod(video_shape) % cp_size != 0 or text_len % cp_size != 0:
             raise ValueError(f"When using context parallel, sequence length {math.prod(video_shape)} must be multiple of cp_size {cp_size}!")
     
     # sampler
-    batch_size = data_config.get("batch_size", 1)
     dp_size = dp_group.size() 
     dp_rank = torch.distributed.get_rank(dp_group)
     sampler = ultra_samplers[data_config.get("sampler_name", "stateful_distributed")](
@@ -259,6 +257,7 @@ def main(config):
     # dataloader
     num_workers = data_config.get("num_workers", 16)
     collator = ultra_collators[data_config.get("collator_name", "wan_t2v")](**data_config.get("collator_config", {}))
+    assert batch_size == 1, f"in eval mode, batch_size should be set to 1, but current batch_size is {batch_size}"
     dataloader = StatefulDataLoader(
         dataset,
         batch_size=batch_size,
@@ -297,12 +296,12 @@ def main(config):
             num_frames=num_frames,
             height=height,
             width=width,
-            seed=seed,
             max_sequence_length=512,
             device=device
         )
         if cp_rank == 0:
-            save_videos(videos, index, output_dir, save_fps)
+            for video, name in zip(videos, name_index):
+                save_video_with_name(video, name, output_dir, save_fps)
 
     cleanup_distributed_env()
 

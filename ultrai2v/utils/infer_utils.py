@@ -10,17 +10,17 @@ def save_videos(videos, start_index, save_path, fps):
     if isinstance(videos, (list, tuple)) or videos.ndim == 5:  # [b, t, h, w, c]
         for i, video in enumerate(videos):
             save_path_i = os.path.join(save_path, f"video_{start_index + i}.mp4")
-            imageio.mimwrite(save_path_i, video, fps=fps, quality=6)
+            imageio.mimwrite(save_path_i, video, fps=fps, codec='libx264', quality=8)
     elif videos.ndim == 4:
         save_path = os.path.join(save_path, f"video_{start_index}.mp4")
-        imageio.mimwrite(save_path, videos, fps=fps, quality=6)
+        imageio.mimwrite(save_path, videos, fps=fps, codec='libx264', quality=8)
     else:
         raise ValueError("The video must be in either [b, t, h, w, c] or [t, h, w, c] format.")
     
 def save_video_with_name(video, name, save_path, fps):
     os.makedirs(save_path, exist_ok=True)
     save_path = os.path.join(save_path, f"{name}.mp4")
-    imageio.mimwrite(save_path, video, fps=fps, quality=6)
+    imageio.mimwrite(save_path, video, fps=fps, codec='libx264', quality=8)
 
 def save_video_grid(videos, save_path, fps, nrow=None):
     b, t, h, w, c = videos.shape
@@ -45,7 +45,7 @@ def save_video_grid(videos, save_path, fps, nrow=None):
         start_c = (padding + w) * c
         video_grid[:, start_r: start_r + h, start_c: start_c + w] = videos[i]
 
-    imageio.mimwrite(os.path.join(save_path, "video_grid.mp4"), video_grid, fps=fps, quality=6)
+    imageio.mimwrite(os.path.join(save_path, "video_grid.mp4"), video_grid, fps=fps, codec='libx264', quality=8)
 
 def load_prompts(prompt):
     if os.path.exists(prompt):

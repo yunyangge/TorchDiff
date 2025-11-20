@@ -7,13 +7,8 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
 
-from torch.distributed.tensor.parallel import (
-    PrepareModuleInput,
-    PrepareModuleOutput,
-)
 from torch.distributed.tensor import Shard, Replicate
 from ultrai2v.utils.utils import is_npu_available
-
 
 from .attention import flash_attention, attention
 from .want2v import (
@@ -24,6 +19,8 @@ from .want2v import (
     WanLayerNorm,
     WanRMSNorm,
 )
+
+from ultrai2v.distributed.redistribution import Redistribution
 
 T5_CONTEXT_TOKEN_NUMBER = 512
 
@@ -550,43 +547,38 @@ models_blocks_to_output_float = {
 cp_plans = {
     "wan_t2v": {
         WanModel:{
-            "cp_input_layer": PrepareModuleInput(
-                input_layouts=(Replicate(),),
-                desired_input_layouts=(Shard(1),), # split on sequence dim, (B, N, C) -> (B, N / cp_size, C)
-                use_local_output=True,
+            "cp_input_layer": Redistribution(
+                original_layouts=(Replicate(),),
+                target_layouts=(Shard(1),), # split on sequence dim, (B, N, C) -> (B, N / cp_size, C)
             ),
-            "cp_output_layer": PrepareModuleOutput(
-                output_layouts=(Shard(1),),
-                desired_output_layouts=(Replicate(),), # gather on sequence dim, (B, N / cp_size, C) -> (B, N, C)
-                use_local_output=True,
+            "cp_output_layer": Redistribution(
+                original_layouts=(Shard(1),),
+                target_layouts=(Replicate(),), # gather on sequence dim, (B, N / cp_size, C) -> (B, N, C)
             ),
         },
         WanSelfAttention: {
-            "cp_self_attn_before_attention_layer": PrepareModuleInput(
-                input_layouts=(Shard(1),), 
-                desired_input_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
-                use_local_output=True,
+            "cp_self_attn_before_attention_layer": Redistribution(
+                original_layouts=(Shard(1),), 
+                target_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
             ),
-            "cp_self_attn_after_attention_layer": PrepareModuleOutput(
-                output_layouts=(Shard(2),),
-                desired_output_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
-                use_local_output=True,
+            "cp_self_attn_after_attention_layer": Redistribution(
+                original_layouts=(Shard(2),),
+                target_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
             ),
         },
         WanT2VCrossAttention: {
-            "cp_cross_attn_before_attention_layer": PrepareModuleInput(
-                input_layouts=(Shard(1),), 
-                desired_input_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
-                use_local_output=True,
+            "cp_cross_attn_before_attention_layer": Redistribution(
+                original_layouts=(Shard(1),), 
+                target_layouts=(Shard(2),), # all to all, (B, N / cp_size, H, D) -> (B, N, H / cp_size, D)
             ),
-            "cp_cross_attn_after_attention_layer": PrepareModuleOutput(
-                output_layouts=(Shard(2),),
-                desired_output_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
-                use_local_output=True,
+            "cp_cross_attn_after_attention_layer": Redistribution(
+                original_layouts=(Shard(2),),
+                target_layouts=(Shard(1),), # all to all, (B, N, H / cp_size, D) -> (B, N / cp_size, H, D)
             ),
         }
     }
 }
+
 
 if __name__ == "__main__":
     device = "cuda:0"

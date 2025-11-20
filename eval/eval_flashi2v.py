@@ -285,7 +285,11 @@ def main(config):
         cp_rank = 0
         cp_size = 1
 
-    for index, batch in enumerate(dataloader):
+    iteration_nums = len(dataloader)
+    log_on_main_process(logger, f"we need to sample {iteration_nums} counts...")
+    dataloader_iter = iter(dataloader)
+    for _ in range(iteration_nums):
+        batch = next(dataloader_iter)
         prompt = batch[PROMPT]
         start_frame = batch[START_FRAME]
         name_index = batch[NAME_INDEX]

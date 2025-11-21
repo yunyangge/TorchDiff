@@ -24,60 +24,50 @@ class StatefulDistributedSampler(DistributedSampler, Stateful):
         drop_last: bool = False,
     ) -> None:
         super().__init__(dataset, num_replicas, rank, shuffle, seed, drop_last)
+
+        # initialize generator
         if self.shuffle:
             self.g = torch.Generator()
-            # self.g.manual_seed(self.seed + self.epoch)
             self.g.manual_seed(self.seed)
             self.generator_state = self.g.get_state()
+
+        # create first epoch’s indices
         self.indices = self._get_indices()
+
+        # for restoring
         self.next_yielded = None
-        self.yielded = 0
+        self.yielded = 0  # only used for state save/load, NOT used for iteration
+
+
+    def __iter__(self):
+        logging.info(
+            f"[Sampler.__iter__] rank={self.rank}, first 5 indices={self.indices[:5]}, "
+            f"starting yielded (restored)={self.yielded}"
+        )
+        return _StatefulDistributedSamplerIter(self)
 
     def _get_indices(self):
         if self.shuffle:
-            indices = torch.randperm(len(self.dataset), generator=self.g).tolist()  # type: ignore[arg-type]
+            indices = torch.randperm(len(self.dataset), generator=self.g).tolist()
         else:
-            indices = list(range(len(self.dataset)))  # type: ignore[arg-type]
+            indices = list(range(len(self.dataset)))
 
         if not self.drop_last:
-            # add extra samples to make it evenly divisible
             padding_size = self.total_size - len(indices)
             if padding_size <= len(indices):
                 indices += indices[:padding_size]
             else:
-                indices += (indices * math.ceil(padding_size / len(indices)))[
-                    :padding_size
-                ]
+                indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
         else:
-            # remove tail of data to make it evenly divisible.
             indices = indices[: self.total_size]
-        assert len(indices) == self.total_size
 
-        # subsample
         indices = indices[self.rank : self.total_size : self.num_replicas]
-        assert len(indices) == self.num_samples
         return indices
 
-    def __iter__(self):
-        logging.info(f"In StatefulDistributedSampler, rank = {self.rank}, first 5 indices: {self.indices[0: min(5, len(self))]}\n"
-                     f"yielded samples num: {self.yielded}, current index for sampler: {self.indices[self.yielded % self.num_samples]}") # Prevent exceeding bounds when save_interval == num_stamples
-        return self
-    
-    def __next__(self):
-        if self.yielded == self.num_samples:
-            self.indices = self._get_indices()
-            self.yielded = 0
-            logging.info(f" In StatefulDistributedSampler, data reshuffle...\n"
-                         f" rank = {self.rank}, first 5 indices: {self.indices[0: min(5, len(self))]}\n"
-                         f" yielded samples num: {self.yielded}, current index for sampler: {self.indices[self.yielded]}")
-            raise StopIteration()
-        val = self.indices[self.yielded]
-        self.yielded += 1
-        return val
 
     def state_dict(self):
         return {
-            self._YIELDED: self.yielded, # yielded samples num < num samples
+            self._YIELDED: self.yielded,
             self._GENERATOR: self.generator_state,
         }
 
@@ -85,11 +75,51 @@ class StatefulDistributedSampler(DistributedSampler, Stateful):
         self.next_yielded = state_dict[self._YIELDED]
         self.generator_state = state_dict[self._GENERATOR]
         self.g.set_state(self.generator_state)
+
+        # regenerate indices using restored generator state
+        self.indices = self._get_indices()
+
         if self.next_yielded is not None:
-            self.indices = self._get_indices()  # We want permutations from the latest generator state that's loaded
             self.yielded = self.next_yielded
             self.next_yielded = None
 
+
+class _StatefulDistributedSamplerIter:
+    """
+    NEW iterator object created for each __iter__() call.
+    """
+
+    def __init__(self, sampler: StatefulDistributedSampler):
+        self.sampler = sampler
+        self.yielded = sampler.yielded  # possibly restored state
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # finished one full epoch
+        if self.yielded >= self.sampler.num_samples:
+            # reshuffle for next epoch
+            self.sampler.indices = self.sampler._get_indices()
+            self.sampler.yielded = 0   # Reset sampler-level for next epoch
+            self.yielded = 0
+
+            logging.info(
+                f"[SamplerIter] reshuffle, rank={self.sampler.rank}, "
+                f"first 5 indices={self.sampler.indices[:5]}"
+            )
+
+            raise StopIteration()
+
+        idx = self.sampler.indices[self.yielded]
+        self.yielded += 1
+
+        # keep sampler-level yielded synced (for state saving)
+        self.sampler.yielded = self.yielded
+
+        return idx
+
+
 data_sampler = {
     'stateful_distributed': StatefulDistributedSampler
-} 
+}

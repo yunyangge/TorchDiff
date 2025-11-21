@@ -7,7 +7,7 @@ output_dir: "output/t2v"
 
 training_iteration: 1000000
 # ddp_size: 1
-fsdp_size: 1
+fsdp_size: 8
 cp_size: 1
 use_context_parallel: True
 reshard_after_forward: False

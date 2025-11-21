@@ -269,7 +269,7 @@ def main(config):
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
     current_batch_nums = current_iteration * gradient_accumulation_steps
 
-    set_seed(seed, device_specific=True, process_group=dp_group) # for training
+    set_seed(seed, device_specific=True, process_group=dp_group, deterministic=True) # for training
     
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
     # dataset
@@ -402,6 +402,11 @@ def main(config):
         prior_dist = q_sample_results["prior_dist"]
         sigmas = q_sample_results["sigmas"]
         timesteps = q_sample_results["timesteps"]
+
+
+        if rank == 0:
+            print(f"interpolated_latents[0][0][0][0][0]: {interpolated_latents[0][0][0][0][0]}, sigmas: {sigmas.item()}")
+
         with torch.autocast("cuda", dtype=weight_dtype):
             model_output = model(
                 interpolated_latents,
@@ -416,10 +421,15 @@ def main(config):
         loss_for_log = loss.clone().detach().unsqueeze(0)
         gathered_loss = gather_data_from_all_ranks(loss_for_log, dim=0)
         gathered_avg_loss += gathered_loss.mean().item()
+
+        if rank == 0:
+            print(f"loss: {loss.item()}")
+            print(f"gathered_avg_loss", gathered_avg_loss)
+
         if current_batch_nums % gradient_accumulation_steps == 0:
             current_iteration += 1
-            grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
-            # grad_norm_before_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
+            # grad_norm_after_clip = adaptive_grad_clipper.adaptive_clip(model.parameters())
+            grad_norm_after_clip = torch.nn.utils.clip_grad_norm_(model.parameters(), init_max_grad_norm, foreach=False)
             optimizer.step()
             optimizer.zero_grad()
             ema_model.update(model, current_iteration)

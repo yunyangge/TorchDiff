@@ -1,6 +1,7 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import math
-
+from enum import Enum, auto
+import warnings
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
@@ -12,6 +13,9 @@ from ultrai2v.utils.utils import is_npu_available
 
 from .attention import flash_attention, attention
 from .want2v import (
+    WanAttentionBlock,
+    WanSelfAttention,
+    WanT2VCrossAttention,
     sinusoidal_embedding_1d,
     rope_params,
     rope_apply,
@@ -25,145 +29,76 @@ from ultrai2v.distributed.redistribution import Redistribution
 T5_CONTEXT_TOKEN_NUMBER = 512
 
 
-class RerrangeWrapper(nn.Module):
-    def forward(self, x, rearrange_str, **kwargs):
-        return rearrange(x, rearrange_str, **kwargs)
-
-class SkiparseRerrangeModule(nn.Module):
-
+class SkiparseRearrange:
     def __init__(
         self,
-        use_context_parallel=True,
-        sparse_ratio=4,
         skiparse_1d=True,
-        skiparse_2d=True,
-        group_skip=False,
+        skiparse_2d=False,
+        sparse_ratio=4,
+        group=True,
+        reverse=False,
     ):
-        super().__init__()
-        self.use_context_parallel = use_context_parallel
-        self.sparse_ratio = sparse_ratio
         self.skiparse_1d = skiparse_1d
         self.skiparse_2d = skiparse_2d
-        self.group_skip = group_skip
+        self.sparse_ratio = sparse_ratio
 
-        if not use_context_parallel and (self.skiparse_1d or self.skiparse_2d):
-            self.rearrange = RerrangeWrapper()
+        if self.skiparse_1d and self.skiparse_2d:
+            raise ValueError(f"We can only use skiparse 1d or skiparse 2d, not both at the same time!")
+        if (not self.skiparse_1d and not self.skiparse_2d) and self.sparse_ratio > 1:
+            warnings.warn("When skiparse_1d = skiparse_2d = False, sparse ratio should be 1, we instead use full attention.")
+            self.sparse_ratio = 1
+
+        self.group = group
+        self.reverse = reverse
+
+    def _skiparse_1d(self, x):
+        if not self.reverse:
+            if not self.group:
+                x = rearrange(x, 'b (n p) c -> (b p) n c', p=self.sparse_ratio)
+            else:
+                x = rearrange(x, 'b (n p q) c -> (b p) (n q) c', p=self.sparse_ratio, q=self.sparse_ratio)
         else:
-            self.rearrange = nn.Identity()
+            if not self.group:
+                x = rearrange(x, '(b p) n c -> b (n p) c', p=self.sparse_ratio)
+            else:
+                x = rearrange(x, '(b p) (n q) c -> b (n p q) c', p=self.sparse_ratio, q=self.sparse_ratio)
+        return x
+    
+    def _skiparse_2d(self, x, grid_sizes):
+        T, H, W = grid_sizes
+        if not self.reverse:
+            if not self.group:
+                x = rearrange(x, 'b (t h p w q) c -> (b p q) (t h w) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H / self.sparse_ratio, w=W / self.sparse_ratio)
+            else:
+                x = rearrange(
+                    x, 'b (t h p1 p2 w q1 q2) c -> (b p1 q1) (t h p2 w q2) c',
+                    p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H / (self.sparse_ratio ** 2), w=H / (self.sparse_ratio ** 2)
+                )
+        else:
+            if not self.group:
+                x = rearrange(x, '(b p q) (t h w) c -> b (t h p w q) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H / self.sparse_ratio, w=W / self.sparse_ratio)
+            else:
+                x = rearrange(
+                    x, '(b p1 q1) (t h p2 w q2) c -> b (t h p1 p2 w q1 q2) c', 
+                    p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H / (self.sparse_ratio ** 2), w=H / (self.sparse_ratio ** 2)
+                )
+        return x
 
-    def forward(self, x):
+    def _skiparse_1d_single_to_group(self, x):
+        pass
+    
+    def __call__(self, x):
         if self.skiparse_1d:
-            self.rearrange()
-
-
-class WanSelfAttention(nn.Module):
-
-    def __init__(self, dim, num_heads, window_size=(-1, -1), qk_norm=True, eps=1e-6):
-        assert dim % num_heads == 0
-        super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.window_size = window_size
-        self.qk_norm = qk_norm
-        self.eps = eps
-
-        # layers
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
-        self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
-        self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
-
-        # cp dummy layers
-        self.cp_self_attn_before_attention_layer = nn.Identity()
-        self.cp_self_attn_after_attention_layer = nn.Identity()
-
-    def forward(self, x, seq_lens, grid_sizes, freqs):
-        r"""
-        Args:
-            x(Tensor): Shape [B, L, num_heads, C / num_heads]
-            seq_lens(Tensor): Shape [B]
-            grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
-            freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
-        """
-        b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-
-        # query, key, value function
-        def qkv_fn(x):
-            q = self.norm_q(self.q(x)).view(b, s, n, d)
-            k = self.norm_k(self.k(x)).view(b, s, n, d)
-            v = self.v(x).view(b, s, n, d)
-            return q, k, v
-
-        q, k, v = qkv_fn(x)
-        
-        # maybe we need cp
-        q = self.cp_self_attn_before_attention_layer(q)
-        k = self.cp_self_attn_before_attention_layer(k)
-        v = self.cp_self_attn_before_attention_layer(v)
-
-        attention_func = flash_attention if not is_npu_available() else attention
-
-        x = attention_func(
-            q=rope_apply(q, grid_sizes, freqs),
-            k=rope_apply(k, grid_sizes, freqs),
-            v=v,
-            k_lens=seq_lens,
-            window_size=self.window_size,
-        )
-
-        # maybe we need cp
-        x = self.cp_self_attn_after_attention_layer(x)
-
-        # output
-        x = x.flatten(2)
-        x = self.o(x)
+            return self._skiparse_1d(x)
+        elif self.skiparse_2d:
+            return self._skiparse_2d(x)
         return x
 
-
-class WanT2VCrossAttention(WanSelfAttention):
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.cp_cross_attn_before_attention_layer = nn.Identity()
-        self.cp_cross_attn_after_attention_layer = nn.Identity()
-
-    def forward(self, x, context, context_lens):
-        r"""
-        Args:
-            x(Tensor): Shape [B, L1, C]
-            context(Tensor): Shape [B, L2, C]
-            context_lens(Tensor): Shape [B]
-        """
-        b, n, d = x.size(0), self.num_heads, self.head_dim
-
-        # compute query, key, value
-        q = self.norm_q(self.q(x)).view(b, -1, n, d)
-        k = self.norm_k(self.k(context)).view(b, -1, n, d)
-        v = self.v(context).view(b, -1, n, d)
-
-        # maybe we need cp
-        q = self.cp_cross_attn_before_attention_layer(q)
-        k = self.cp_cross_attn_before_attention_layer(k)
-        v = self.cp_cross_attn_before_attention_layer(v)
-
-        # compute attention
-        attention_func = flash_attention if not is_npu_available() else attention
-        x = attention_func(q, k, v, k_lens=context_lens)
-
-        # maybe we need cp
-        x = self.cp_cross_attn_after_attention_layer(x)
-        
-        # output
-        x = x.flatten(2)
-        x = self.o(x)
-        return x
+class SkiparseChecker:
+    pass
 
 
-
-class WanAttentionBlock(nn.Module):
+class SkiparseAttentionBlock(WanAttentionBlock):
 
     def __init__(
         self,

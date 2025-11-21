@@ -7,7 +7,7 @@ output_dir: "output/t2v"
 
 training_iteration: 1000000
 # ddp_size: 1
-fsdp_size: 8
+fsdp_size: 1
 cp_size: 1
 use_context_parallel: True
 reshard_after_forward: False
@@ -15,7 +15,7 @@ gradient_checkpointing: True
 gradient_accumulation_steps: 1
 init_max_grad_norm: 1.0
 log_interval: 1
-save_interval: 1000
+save_interval: 5
 weight_dtype: "bf16"
 ema_decay: 0.9999
 ema_update_interval: 1
@@ -61,4 +61,4 @@ data_config:
   
 optimizer_config:
   lr: 0.00002
-  weight_decay: 0.01
+  weight_decay: 0

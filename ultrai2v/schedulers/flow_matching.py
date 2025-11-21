@@ -170,6 +170,8 @@ class FlowMatchingScheduler:
             shift = self.shift
         sigmas = shift * sigmas / (1 + (shift - 1) * sigmas)
 
+        sigmas = torch.ones((batch_size,), device=device) * 0.5
+
         return sigmas
 
 

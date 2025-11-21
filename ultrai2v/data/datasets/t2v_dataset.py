@@ -146,7 +146,7 @@ class T2VRandomDataset(BaseDataset):
         )
 
     def __len__(self):
-        return 1000000
+        return 20
 
     def __getitem__(self, index):
         return self.getitem(index)

@@ -3,12 +3,12 @@
 model_name: "flashi2v"
 seed: 1024
 
-output_dir: "/work/share1/checkpoint/gyy/flashi2v_14b_81x480x832"
+output_dir: "/work/share1/checkpoint/gyy/flashi2v_14b_81x720x1280"
 
 training_iteration: 1000000
 # ddp_size: 1
-fsdp_size: 16
-cp_size: 2
+fsdp_size: 32
+cp_size: 4
 use_context_parallel: True
 reshard_after_forward: null
 gradient_checkpointing: True
@@ -23,7 +23,7 @@ save_with_dcp_api: True
 
 wandb_config:
   project_name: "flashi2v"
-  exp_name: "flashi2v_14b_81x480x832_bs16x4_fsdp16_cp2_lr2e-5"
+  exp_name: "flashi2v_14b_81x720x1280_bs16x2_fsdp32_cp4_lr2e-5"
 
 model_config:
   dim: 5120
@@ -37,7 +37,7 @@ model_config:
   low_freq_energy_ratio: [0.05, 0.95]
   fft_return_abs: True
   conv3x3x3_proj: False
-  pretrained_model_dir_or_checkpoint: "/work/share1/checkpoint/gyy/flashi2v_14b/iter_000040000/ema_model_state_dict.pt"
+  pretrained_model_dir_or_checkpoint: "/work/share1/checkpoint/gyy/flashi2v_14b_81x480x832/iter_000010000/ema_model_state_dict.pt"
 
 scheduler_config:
   scheduler_name: "flashi2v_flow_matching"
@@ -64,8 +64,8 @@ data_config:
     metafile_or_dir_path: "/work/share1/caption/osp/lmdb/all_videos_81f_864p/filtered_samples_2088532.lmdb"
     text_tokenizer_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-14B/google/umt5-xxl"
     text_drop_ratio: 0.1
-    sample_height: 480
-    sample_width: 832
+    sample_height: 720
+    sample_width: 1280
     sample_num_frames: 81
     train_fps: 16
     tokenizer_max_length: 512

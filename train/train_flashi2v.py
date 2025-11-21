@@ -128,6 +128,7 @@ def main(config):
     ema_update_interval = config.get("ema_update_interval", 1)
     explicit_prefetching_num_blocks = config.get("explicit_prefetching_num_blocks", 0)
     use_context_parallel = config.get("use_context_parallel", False)
+    deterministic_training = config.get("deterministic_training", False)
 
     # save config
     output_dir = config.get("output_dir", "./output")
@@ -323,7 +324,7 @@ def main(config):
     current_iteration = 0 if checkpointer.last_training_iteration is None else checkpointer.last_training_iteration
     current_batch_nums = current_iteration * gradient_accumulation_steps
 
-    set_seed(seed, device_specific=True, process_group=dp_group) # for training
+    set_seed(seed, device_specific=True, process_group=dp_group, deterministic=deterministic_training) # for training
     
     log_on_main_process(logger, "Initializing dataset, sampler and dataloader...")
     # dataset

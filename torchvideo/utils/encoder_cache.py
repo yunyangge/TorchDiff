@@ -1,6 +1,6 @@
 import torch
 import torch.distributed as dist
-from ultrai2v.distributed.utils import broadcast_tensor_list
+from torchvideo.distributed.utils import broadcast_tensor_list
 
 class EncoderCacheManager:
     def __init__(self, tp_cp_group: dist.ProcessGroup = None):
@@ -37,7 +37,7 @@ class EncoderCacheManager:
 
 
 if __name__ == "__main__":
-    from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
+    from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env
     from torch.distributed.device_mesh import init_device_mesh
     setup_distributed_env()
     mesh = init_device_mesh("cuda", [2, 4], mesh_dim_names=["dp", "cp"])

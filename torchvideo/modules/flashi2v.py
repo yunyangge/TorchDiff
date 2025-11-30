@@ -14,7 +14,7 @@ from .want2v import (
     WanRMSNorm,
 )
 
-from ultrai2v.distributed.redistribution import Redistribution
+from torchvideo.distributed.redistribution import Redistribution
 
 class LearnableProj(nn.Module):
 

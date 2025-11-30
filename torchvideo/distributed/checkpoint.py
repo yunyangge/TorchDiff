@@ -19,7 +19,7 @@ from torch.distributed.fsdp import FSDPModule
 from torch.distributed.tensor import distribute_tensor, DTensor
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from ultrai2v.utils.utils import is_npu_available
+from torchvideo.utils.utils import is_npu_available
 
 MODEL_CHECKPOINT = "model_state_dict.pt"
 OPTIM_CHECKPOINT = "optim_state_dict.pt"

@@ -3,8 +3,8 @@ from torchvision.transforms import Compose
 
 from diffusers.utils.torch_utils import randn_tensor
 from .t2v_pipeline import T2VInferencePipeline
-from ultrai2v.utils.constant import NEGATIVE_PROMOPT
-from ultrai2v.data.utils.transforms import CenterCropResizeVideo, ToTensorAfterResize, AENorm
+from torchvideo.utils.constant import NEGATIVE_PROMOPT
+from torchvideo.data.utils.transforms import CenterCropResizeVideo, ToTensorAfterResize, AENorm
 
 class FlashI2VInferencePipeline(T2VInferencePipeline):
 

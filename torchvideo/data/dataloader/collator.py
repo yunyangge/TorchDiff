@@ -1,5 +1,5 @@
 import torch
-from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
+from torchvideo.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
 
 class WanDataCollator:
     def __init__(self, *args, **kwargs):

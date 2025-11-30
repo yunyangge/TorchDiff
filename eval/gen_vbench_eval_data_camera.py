@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 from einops import rearrange
 
-from ultrai2v.data.utils.utils import LMDBReader, LMDBWriter
+from torchvideo.data.utils.utils import LMDBReader, LMDBWriter
 
 sample_height = 480
 sample_width = 832

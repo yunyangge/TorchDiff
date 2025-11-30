@@ -4,7 +4,7 @@ import yaml
 from tqdm import tqdm
 import wandb
 
-from ultrai2v.utils.utils import check_and_import_npu
+from torchvideo.utils.utils import check_and_import_npu
 import torch
 check_and_import_npu()
 
@@ -16,22 +16,22 @@ from argparse import ArgumentParser
 from torch.utils.data import DataLoader
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
-from ultrai2v.data.utils.utils import cyclic_iter
-from ultrai2v.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
-from ultrai2v.utils.random_utils import set_seed
-from ultrai2v.distributed.utils import (
+from torchvideo.data import ultra_datasets, ultra_samplers, ultra_collators
+from torchvideo.data.utils.utils import cyclic_iter
+from torchvideo.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
+from torchvideo.utils.random_utils import set_seed
+from torchvideo.distributed.utils import (
     setup_distributed_env, 
     cleanup_distributed_env, 
     set_modules_to_forward_prefetch, 
     set_modules_to_backward_prefetch, 
     gather_data_from_all_ranks
 )
-from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
-from ultrai2v.distributed.fsdp_ema import FSDPEMAModel as EMAModel
-from ultrai2v.distributed.cp_wrapper import CP_wrapper
+from torchvideo.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
+from torchvideo.distributed.fsdp_ema import FSDPEMAModel as EMAModel
+from torchvideo.distributed.cp_wrapper import CP_wrapper
 
-from ultrai2v.modules import (
+from torchvideo.modules import (
     WanVAE, 
     T5EncoderModel, 
     models, 
@@ -40,13 +40,13 @@ from ultrai2v.modules import (
     models_blocks_to_output_float,
     models_cp_plans,
 )
-from ultrai2v.schedulers import schedulers
+from torchvideo.schedulers import schedulers
 
-from ultrai2v.distributed.checkpoint import Checkpointer, PREFIX as checkpoint_prefix
-from ultrai2v.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK, START_FRAME
-from ultrai2v.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
-from ultrai2v.utils.clip_grads import AdaptiveGradClipper
-from ultrai2v.utils.encoder_cache import EncoderCacheManager
+from torchvideo.distributed.checkpoint import Checkpointer, PREFIX as checkpoint_prefix
+from torchvideo.utils.constant import VIDEO, PROMPT_IDS, PROMPT_MASK, START_FRAME
+from torchvideo.utils.utils import str_to_precision, params_nums_to_str, get_memory_allocated
+from torchvideo.utils.clip_grads import AdaptiveGradClipper
+from torchvideo.utils.encoder_cache import EncoderCacheManager
 
 def main(config):
     logger = get_logger()

@@ -2,7 +2,7 @@ import os
 import torch
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 from torch.distributed.device_mesh import init_device_mesh
-from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
+from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env
 
 if __name__ == "__main__":
 

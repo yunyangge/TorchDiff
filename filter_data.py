@@ -1,8 +1,8 @@
 import yaml
 from argparse import ArgumentParser
 
-from ultrai2v.data.utils.wan_utils import WanVideoFilter
-from ultrai2v.data.utils.utils import LMDBReader, LMDBWriter
+from torchvideo.data.utils.wan_utils import WanVideoFilter
+from torchvideo.data.utils.utils import LMDBReader, LMDBWriter
 
 
 if __name__ == '__main__':

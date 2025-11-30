@@ -5,18 +5,18 @@ from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
-from ultrai2v.utils.utils import check_and_import_npu
+from torchvideo.utils.utils import check_and_import_npu
 check_and_import_npu()
 
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoTokenizer
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from ultrai2v.utils.constant import PROMPT, START_FRAME, NAME_INDEX
-from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
-from ultrai2v.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
-from ultrai2v.distributed.cp_wrapper import CP_wrapper
-from ultrai2v.modules import (
+from torchvideo.utils.constant import PROMPT, START_FRAME, NAME_INDEX
+from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env, gather_tensor_list_to_one
+from torchvideo.distributed.fsdp2_wrapper import FSDP2_mix_wrapper
+from torchvideo.distributed.cp_wrapper import CP_wrapper
+from torchvideo.modules import (
     WanVAE, 
     T5EncoderModel, 
     models, 
@@ -25,15 +25,15 @@ from ultrai2v.modules import (
     models_blocks_to_output_float,
     models_cp_plans,
 )
-from ultrai2v.schedulers import schedulers
-from ultrai2v.distributed.checkpoint import Checkpointer
-from ultrai2v.data import ultra_datasets, ultra_samplers, ultra_collators
-from ultrai2v.utils.utils import str_to_precision, get_memory_allocated
-from ultrai2v.utils.log_utils import get_logger, log_on_main_process
-from ultrai2v.pipelines import pipelines
-from ultrai2v.utils.infer_utils import save_videos, save_video_with_name
-from ultrai2v.utils.filter import HighFrequencyExtractor
-from ultrai2v.utils.random_utils import set_seed
+from torchvideo.schedulers import schedulers
+from torchvideo.distributed.checkpoint import Checkpointer
+from torchvideo.data import ultra_datasets, ultra_samplers, ultra_collators
+from torchvideo.utils.utils import str_to_precision, get_memory_allocated
+from torchvideo.utils.log_utils import get_logger, log_on_main_process
+from torchvideo.pipelines import pipelines
+from torchvideo.utils.infer_utils import save_videos, save_video_with_name
+from torchvideo.utils.filter import HighFrequencyExtractor
+from torchvideo.utils.random_utils import set_seed
 
 class FlashI2VWrapper(nn.Module):
     def __init__(

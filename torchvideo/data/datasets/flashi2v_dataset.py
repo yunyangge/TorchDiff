@@ -10,12 +10,12 @@ import copy
 from torch.utils.data import Dataset
 import numpy as np
 from transformers import AutoTokenizer
-from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
-from ultrai2v.data.utils.utils import LMDBReader
-from ultrai2v.data.utils.image_reader import is_image_file
-from ultrai2v.data.utils.video_reader import is_video_file
-from ultrai2v.data.datasets.t2v_dataset import WanT2VDataset, T2VRandomDataset, T2VEvalDataset
-from ultrai2v.data.utils.wan_utils import WanVideoProcessor, WanImageProcessor
+from torchvideo.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, START_FRAME, NAME_INDEX
+from torchvideo.data.utils.utils import LMDBReader
+from torchvideo.data.utils.image_reader import is_image_file
+from torchvideo.data.utils.video_reader import is_video_file
+from torchvideo.data.datasets.t2v_dataset import WanT2VDataset, T2VRandomDataset, T2VEvalDataset
+from torchvideo.data.utils.wan_utils import WanVideoProcessor, WanImageProcessor
 
 FlashI2VOutputData = {
     PROMPT_IDS: None,

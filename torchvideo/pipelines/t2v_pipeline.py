@@ -5,7 +5,7 @@ import re
 
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines import DiffusionPipeline
-from ultrai2v.utils.constant import NEGATIVE_PROMOPT
+from torchvideo.utils.constant import NEGATIVE_PROMOPT
 
 class T2VInferencePipeline(DiffusionPipeline):
 

@@ -3,7 +3,7 @@ import torch
 import logging
 import warnings
 import types
-from ultrai2v.distributed.utils import gather_data_from_all_ranks
+from torchvideo.distributed.utils import gather_data_from_all_ranks
 
 GRAD_NORM_INF = 1000.0
 

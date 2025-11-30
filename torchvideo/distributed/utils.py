@@ -5,7 +5,7 @@ import torch.distributed as dist
 from datetime import timedelta
 from torch.distributed.tensor import DTensor, Replicate, Shard
 from typing import Iterable
-from ultrai2v.utils.utils import str_to_precision, precision_to_str
+from torchvideo.utils.utils import str_to_precision, precision_to_str
 
 def setup_distributed_env(backend: str = "nccl", timeout: int = 3600):
     """ Initialize distributed environment. """

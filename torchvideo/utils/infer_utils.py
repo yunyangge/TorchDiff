@@ -3,7 +3,7 @@ import math
 import torch
 import imageio
 
-from ultrai2v.data.utils.image_reader import ImageReader, is_image_file
+from torchvideo.data.utils.image_reader import ImageReader, is_image_file
 
 def save_videos(videos, start_index, save_path, fps):
     os.makedirs(save_path, exist_ok=True)

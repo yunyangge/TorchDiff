@@ -9,10 +9,10 @@ import copy
 
 import numpy as np
 from transformers import AutoTokenizer
-from ultrai2v.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, NAME_INDEX
-from ultrai2v.data.utils.utils import LMDBReader
-from ultrai2v.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor
-from ultrai2v.data.datasets.base_dataset import BaseDataset
+from torchvideo.utils.constant import VIDEO, PROMPT, PROMPT_IDS, PROMPT_MASK, NAME_INDEX
+from torchvideo.data.utils.utils import LMDBReader
+from torchvideo.data.utils.wan_utils import WanTextProcessor, WanVideoProcessor
+from torchvideo.data.datasets.base_dataset import BaseDataset
 
 T2VOutputData = {
     PROMPT_IDS: None,

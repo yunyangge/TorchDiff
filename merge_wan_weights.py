@@ -1,5 +1,5 @@
 import torch
-from ultrai2v.modules.want2v import WanModel
+from torchvideo.modules.want2v import WanModel
 
 orig_path = "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-14B"
 save_path = "./want2v_14b.pt"

@@ -8,7 +8,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from einops import rearrange
 
 from torch.distributed.tensor import Shard, Replicate
-from ultrai2v.utils.utils import is_npu_available
+from torchvideo.utils.utils import is_npu_available
 
 from .attention import flash_attention, attention
 from .want2v import (
@@ -23,7 +23,7 @@ from .want2v import (
     WanRMSNorm,
 )
 
-from ultrai2v.distributed.redistribution import Redistribution
+from torchvideo.distributed.redistribution import Redistribution
 
 T5_CONTEXT_TOKEN_NUMBER = 512
 

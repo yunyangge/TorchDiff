@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ultrai2v"
+name = "torchvideo"
 version = "1.0"
-description = "UltraI2V, based on wan"
+description = "Video trainer and runner based on torch."
 license = { file = "LICENSE.txt" }
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["ultrai2v"]
+packages = ["torchvideo"]
 
 [tool.setuptools.package-data]
-"ultrai2v" = ["**/*.py"]
+"torchvideo" = ["**/*.py"]
 
 [tool.black]
 line-length = 88

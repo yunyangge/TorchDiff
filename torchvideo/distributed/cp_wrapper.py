@@ -4,11 +4,11 @@ from fnmatch import fnmatch
 import torch
 import torch.nn as nn
 from typing import Optional, Union
-from ultrai2v.utils.utils import is_npu_available, check_and_import_npu
+from torchvideo.utils.utils import is_npu_available, check_and_import_npu
 check_and_import_npu()
 from torch.distributed.device_mesh import DeviceMesh
 
-from ultrai2v.distributed.redistribution import Redistribution
+from torchvideo.distributed.redistribution import Redistribution
 
 def custom_context_parallelize_module(  # type: ignore[return]
     module: nn.Module,
@@ -95,9 +95,9 @@ def CP_wrapper(model: nn.Module, all_cp_plans: dict, cp_mesh: DeviceMesh):
 
 if __name__ == "__main__":
     from torch.distributed.device_mesh import init_device_mesh
-    from ultrai2v.modules import models, models_blocks_to_float, models_main_block, models_cp_plans
-    from ultrai2v.distributed.utils import setup_distributed_env, cleanup_distributed_env
-    from ultrai2v.utils.random_utils import set_seed
+    from torchvideo.modules import models, models_blocks_to_float, models_main_block, models_cp_plans
+    from torchvideo.distributed.utils import setup_distributed_env, cleanup_distributed_env
+    from torchvideo.utils.random_utils import set_seed
     
     setup_distributed_env()
 

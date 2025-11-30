@@ -1,6 +1,6 @@
 
 import torch
-from ultrai2v.modules.osp_hi import SkiparseRearrange, RearrangeType
+from torchvideo.modules.osp_hi import SkiparseRearrange, RearrangeType
 
 test_num = 64
 sparse_ratio = 4

@@ -2,9 +2,9 @@
 
 model_name: "flashi2v"
 pipeline_name: "flashi2v"
-seed: 2025
+seed: 666
 
-output_dir: "/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832"
+output_dir: "/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832_camera"
 
 num_frames: 49
 height: 480
@@ -55,7 +55,7 @@ data_config:
   pin_memory: False
   dataset_name: "i2v_eval"
   dataset_config:
-    metafile_or_dir_path: "/work/share1/caption/osp/lmdb/vbench_i2v_samples_355.lmdb"
+    metafile_or_dir_path: "/work/share/projects/gyy/UltraI2V/vbench_eval_data_camera_motion/filtered_samples_763.lmdb"
     text_tokenizer_path: "/work/share1/checkpoint/Wan-AI/Wan2.1-T2V-14B/google/umt5-xxl"
     num_samples_per_prompt: 5
     sample_height: 480

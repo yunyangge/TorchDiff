@@ -2,10 +2,10 @@ import os
 import glob
 import shutil
 
-videos = glob.glob("/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832/*.mp4")
+videos = glob.glob("/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832_camera/*.mp4")
 
-idx_to_name_txt = "/work/share/projects/gyy/UltraI2V/eval/vbench_idx_to_name.txt"
-save_dir = "/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832_renamed5"
+idx_to_name_txt = "/work/share/projects/gyy/UltraI2V/eval/vbench_idx_to_name_camera_motion.txt"
+save_dir = "/work/share/projects/gyy/UltraI2V/samples/flashi2v_14b_vbench_49x480x832_renamed4_camera"
 os.makedirs(save_dir, exist_ok=True)
 with open(idx_to_name_txt, "r") as f:
     idx_to_name = {int(line.split('\t')[0]): line.split('\t')[1].strip().removesuffix('.jpg') for line in f}

@@ -9,7 +9,7 @@ import torch.distributed as dist
 
 from .cp_state import cp_state
 from torch.nn import functional as F
-from torchdiff.utils.utils import SafeCacheManager
+from torchdiff.utils.utils import contiguous
 
 
 def get_shard_seq_lens(input: torch.Tensor, group: dist.ProcessGroup):
@@ -61,10 +61,9 @@ def _all_to_all_4D(
 
         # transpose groups of heads with the seq-len parallel dimension, so that we can scatter them!
         # (bs, seqlen/P, hc, hs) -reshape-> (bs, seq_len/P, P, hc/P, hs) -transpose(0,2)-> (P, seq_len/P, bs, hc/P, hs)
-        input_t = (
+        input_t = contiguous(
             input.reshape(bs, shard_seqlen, seq_world_size, shard_hc, hs)
             .permute(2, 1, 0, 3, 4)
-            .contiguous()
         )
 
         output = torch.empty_like(input_t)
@@ -73,14 +72,12 @@ def _all_to_all_4D(
         dist.all_to_all_single(output, input_t, group=group)
         # if scattering the seq-dim, transpose the heads back to the original dimension
         # output shape: [bs, seq_world_size, max_shard_seq_len, shard_hc, hs]
-        output = (
+        output = contiguous(
             output
             .permute(2, 0, 1, 3, 4)
-            .contiguous()
         )
         has_variable_len = any(s != max_shard_seq_len for s in shard_seq_lens)
         if has_variable_len:
-            
             chunks = [
                 output[:, i, :shard_seq_lens[i], :, :]  # narrow（view，不分配内存）
                 for i in range(seq_world_size)
@@ -97,7 +94,7 @@ def _all_to_all_4D(
         max_shard_seq_len = max(shard_seq_lens)
         has_variable_len = any(s != max_shard_seq_len for s in shard_seq_lens)
         if has_variable_len:
-            chunks = torch.split(input, shard_seq_lens, dim=1)
+            chunks = input.split_with_sizes(shard_seq_lens, dim=1)
             padded_chunks = []
             for i, chunk in enumerate(chunks):
                 gap = max_shard_seq_len - shard_seq_lens[i]
@@ -114,10 +111,9 @@ def _all_to_all_4D(
 
         # transpose groups of heads with the seq-len parallel dimension, so that we can scatter them!
         # (bs, seqlen, hc/P, hs) -reshape-> (bs, P, seq_len/P, hc/P, hs) -transpose(0, 3)-> (hc/P, P, seqlen/P, bs, hs) -transpose(0, 1) -> (P, hc/P, seqlen/P, bs, hs)
-        input_t = (
+        input_t = contiguous(
             input_reshaped.reshape(bs, seq_world_size, shard_seqlen, shard_hc, hs)
             .permute(1, 3, 2, 0, 4)
-            .contiguous()
         )
 
         output = torch.empty_like(input_t)
@@ -126,16 +122,15 @@ def _all_to_all_4D(
         dist.all_to_all_single(output, input_t, group=group)
 
         # (hc, seqlen/N, bs, hs) -tranpose(0,2)-> (bs, seqlen/N, hc, hs)
-        output = (
+        output = contiguous(
             output
             .reshape(hc, shard_seqlen, bs, hs)
             .permute(2, 1, 0, 3)
-            .contiguous()
         )
 
         local_shard_seq_len = shard_seq_lens[dist.get_rank(group)]
         if local_shard_seq_len < max_shard_seq_len:
-            output = output[:, :local_shard_seq_len].contiguous()
+            output = contiguous(output[:, :local_shard_seq_len])
 
         return output
 
@@ -218,9 +213,9 @@ class _AllGather(torch.autograd.Function):
             torch.empty(sizes[i], dtype=input_.dtype, device=input_.device)
             for i in range(world_size)
         ]
-        dist.all_gather(tensor_list, input_.contiguous(), group=group)
+        dist.all_gather(tensor_list, contiguous(input_), group=group)
 
-        return torch.cat(tensor_list, dim=dim)
+        return contiguous(torch.cat(tensor_list, dim=dim))
 
     @staticmethod
     def backward(ctx, grad_outputs):
@@ -232,7 +227,7 @@ class _AllGather(torch.autograd.Function):
 
         grad_input = torch.split(grad_outputs, dim_sizes, dim=dim)[rank]
 
-        return grad_input, None, None, None
+        return grad_input, None, None
 
 
 def all_gather(input_: torch.Tensor, dim: int = 1, group=None):

@@ -11,7 +11,7 @@ from einops import rearrange, repeat, reduce
 from abc import ABC, abstractmethod
 
 from torchdiff.distributed.cp_state import cp_state, use_context_parallel, use_skiparse_context_parallel
-from torchdiff.distributed.communication import all_gather, all_to_all_4D, get_shard_seq_lens
+from torchdiff.distributed.communication import all_gather, all_to_all_4D, all_to_all_single, get_shard_seq_lens
 from torchdiff.utils.utils import is_npu_available, safe_get_rank, contiguous, SafeCacheManager
 
 from .attention import flash_attention, attention, attention_with_mask
@@ -170,235 +170,109 @@ class SkiparseRearrange:
         return x
 
     # ================== einops实现 ==================
-    # def _repeat(self, x, grid_sizes=None):
-    #     x = repeat(x, 'b n c -> (b p) n c', p=self.sparse_ratio)
-    #     x = self._skiparse_cp_scatter(x)
-    #     return x
-
-    # def _reduce(self, x, grid_sizes=None):
-    #     x = self._skiparse_cp_gather(x)
-    #     x = reduce(x, '(b p) n c -> b n c', 'mean', p=self.sparse_ratio)
-    #     return x
-
-    # def _skiparse_1d_single(self, x, grid_sizes=None):
-    #     return rearrange(x, 'b (n p) c -> (b p) n c', p=self.sparse_ratio)
-
-    # def _skiparse_1d_single_reverse(self, x, grid_sizes=None):
-    #     return rearrange(x, '(b p) n c -> b (n p) c', p=self.sparse_ratio)
-
-    # def _skiparse_1d_group(self, x, grid_sizes=None):
-    #     return rearrange(x, 'b (n p q) c -> (b p) (n q) c', p=self.sparse_ratio, q=self.sparse_ratio)
-
-    # def _skiparse_1d_group_reverse(self, x, grid_sizes=None):
-    #     return rearrange(x, '(b p) (n q) c -> b (n p q) c', p=self.sparse_ratio, q=self.sparse_ratio)
-
-    # single2group和group2single是完全互逆的，代码实现上是相同的
-    # def _skiparse_1d_single_to_group(self, x, grid_sizes=None):
-    #     k = int(self.sparse_ratio ** 0.5)
-    #     return rearrange(x, '(b p q) (n r s) c -> (b r s) (n p q) c', p=k, q=k, r=k, s=k)
-
-    # def _skiparse_1d_group_to_single(self, x, grid_sizes=None):
-    #     k = int(self.sparse_ratio ** 0.5)
-    #     return rearrange(x, '(b r s) (n p q) c -> (b p q) (n r s) c', p=k, q=k, r=k, s=k)
-
-    # def _skiparse_2d_single(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(x, 'b (t h p w q) c -> (b p q) (t h w) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H // self.sparse_ratio, w=W // self.sparse_ratio)
-
-    # def _skiparse_2d_single_reverse(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(x, '(b p q) (t h w) c -> b (t h p w q) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H // self.sparse_ratio, w=W // self.sparse_ratio)
-
-    # def _skiparse_2d_group(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(
-    #         x, 'b (t h p1 p2 w q1 q2) c -> (b p1 q1) (t h p2 w q2) c',
-    #         p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H // (self.sparse_ratio ** 2), w=W // (self.sparse_ratio ** 2)
-    #     )
-
-    # def _skiparse_2d_group_reverse(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(
-    #         x, '(b p1 q1) (t h p2 w q2) c -> b (t h p1 p2 w q1 q2) c',
-    #         p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H // (self.sparse_ratio ** 2), w=W // (self.sparse_ratio ** 2)
-    #     )
-
-    # single2group和group2single是完全互逆的，代码实现上是相同的
-    # def _skiparse_2d_single_to_group(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(
-    #         x, '(b p2 q2) (t h_p1 p1 w_q1 q1) c -> (b p1 q1) (t h_p1 p2 w_q1 q2) c',
-    #         p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h_p1=H // (self.sparse_ratio ** 2), w_q1=W // (self.sparse_ratio ** 2)
-    #     )
-
-    # def _skiparse_2d_group_to_single(self, x, grid_sizes):
-    #     T, H, W = grid_sizes
-    #     return rearrange(
-    #         x, '(b p1 q1) (t h_p1 p2 w_q1 q2) c -> (b p2 q2) (t h_p1 p1 w_q1 q1) c',
-    #         p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h_p1=H // (self.sparse_ratio ** 2), w_q1=W // (self.sparse_ratio ** 2)
-    #     )
-
-    # ============ torch native实现 ============
+    # 用 (p b) 排列而不是 (b p) 排列，可以使开启skiparse context parallel时，每个rank都可以看到所有的data（但是是不同的sub sequence）
     def _repeat(self, x, grid_sizes=None):
-        """repeat: 'b n c -> (b p) n c'"""
-        B, N, C = x.shape
-        P = self.sparse_ratio
-        # unsqueeze → expand → reshape，expand 不分配内存
-        x = x.unsqueeze(1).expand(B, P, N, C).reshape(B * P, N, C)
+        x = repeat(x, 'b n c -> (p b) n c', p=self.sparse_ratio)
         x = self._skiparse_cp_scatter(x)
         return x
 
     def _reduce(self, x, grid_sizes=None):
-        """reduce mean: '(b p) n c -> b n c'"""
         x = self._skiparse_cp_gather(x)
-        P = self.sparse_ratio
-        BP, N, C = x.shape
-        B = BP // P
-        x = x.view(B, P, N, C).mean(dim=1)
+        x = reduce(x, '(p b) n c -> b n c', 'mean', p=self.sparse_ratio)
         return x
 
     def _skiparse_1d_single(self, x, grid_sizes=None):
-        """'b (n p) c -> (b p) n c'"""
-        B, NP, C = x.shape
-        P = self.sparse_ratio
-        N = NP // P
-        #   [B, N, P, C]  →  [B, P, N, C]  →  [B*P, N, C]
-        return x.view(B, N, P, C).permute(0, 2, 1, 3).reshape(B * P, N, C)
+        return rearrange(x, 'b (n p) c -> (p b) n c', p=self.sparse_ratio)
 
     def _skiparse_1d_single_reverse(self, x, grid_sizes=None):
-        """'(b p) n c -> b (n p) c'"""
-        BP, N, C = x.shape
-        P = self.sparse_ratio
-        B = BP // P
-        #   [B, P, N, C]  →  [B, N, P, C]  →  [B, N*P, C]
-        return x.view(B, P, N, C).permute(0, 2, 1, 3).reshape(B, N * P, C)
+        return rearrange(x, '(p b) n c -> b (n p) c', p=self.sparse_ratio)
 
     def _skiparse_1d_group(self, x, grid_sizes=None):
-        """'b (n p q) c -> (b p) (n q) c'"""
-        B, NPQ, C = x.shape
-        P = self.sparse_ratio
-        Q = self.sparse_ratio
-        N = NPQ // (P * Q)
-        #   [B, N, P, Q, C]  →  [B, P, N, Q, C]  →  [B*P, N*Q, C]
-        return x.view(B, N, P, Q, C).permute(0, 2, 1, 3, 4).reshape(B * P, N * Q, C)
+        return rearrange(x, 'b (n p q) c -> (p b) (n q) c', p=self.sparse_ratio, q=self.sparse_ratio)
 
     def _skiparse_1d_group_reverse(self, x, grid_sizes=None):
-        """'(b p) (n q) c -> b (n p q) c'"""
-        BP, NQ, C = x.shape
-        P = self.sparse_ratio
-        Q = self.sparse_ratio
-        B = BP // P
-        N = NQ // Q
-        #   [B, P, N, Q, C]  →  [B, N, P, Q, C]  →  [B, N*P*Q, C]
-        return x.view(B, P, N, Q, C).permute(0, 2, 1, 3, 4).reshape(B, N * P * Q, C)
+        return rearrange(x, '(p b) (n q) c -> b (n p q) c', p=self.sparse_ratio, q=self.sparse_ratio)
 
+    # single2group和group2single是完全互逆的，代码实现上是相同的
     def _skiparse_1d_single_to_group(self, x, grid_sizes=None):
-        """'(b p q) (n r s) c -> (b r s) (n p q) c'"""
-        k2 = self.sparse_ratio          # k² = sparse_ratio
-        Bk2, Nk2, C = x.shape
-        B = Bk2 // k2
-        N = Nk2 // k2
-        return (x.view(B, k2, N, k2, C)
-                .transpose(1, 3)
-                .contiguous()
-                .view(Bk2, Nk2, C))
+        k = int(self.sparse_ratio ** 0.5)
+        return rearrange(x, '(p q b) (n r s) c -> (r s b) (n p q) c', p=k, q=k, r=k, s=k)
 
     def _skiparse_1d_group_to_single(self, x, grid_sizes=None):
-        """'(b r s) (n p q) c -> (b p q) (n r s) c'"""
+        # k = int(self.sparse_ratio ** 0.5)
+        # return rearrange(x, '(r s b) (n p q) c -> (p q b) (n r s) c', p=k, q=k, r=k, s=k)
         return self._skiparse_1d_single_to_group(x, grid_sizes)
 
     def _skiparse_2d_single(self, x, grid_sizes):
-        """'b (t h p w q) c -> (b p q) (t h w) c'"""
         T, H, W = grid_sizes
-        B, _, C = x.shape
-        P = self.sparse_ratio
-        Q = self.sparse_ratio
-        h = H // P
-        w = W // Q
-        # 展开:    [B, T, h, P, w, Q, C]   (indices: 0,1,2,3,4,5,6)
-        # 目标:    [B, P, Q, T, h, w, C]
-        # permute: (0, 3, 5, 1, 2, 4, 6)
-        return (x.view(B, T, h, P, w, Q, C)
-                .permute(0, 3, 5, 1, 2, 4, 6)
-                .reshape(B * P * Q, T * h * w, C))
+        return rearrange(x, 'b (t h p w q) c -> (p q b) (t h w) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H // self.sparse_ratio, w=W // self.sparse_ratio)
 
     def _skiparse_2d_single_reverse(self, x, grid_sizes):
-        """'(b p q) (t h w) c -> b (t h p w q) c'"""
         T, H, W = grid_sizes
-        P = self.sparse_ratio
-        Q = self.sparse_ratio
-        h = H // P
-        w = W // Q
-        BPQ, _, C = x.shape
-        B = BPQ // (P * Q)
-        # 展开:    [B, P, Q, T, h, w, C]   (indices: 0,1,2,3,4,5,6)
-        # 目标:    [B, T, h, P, w, Q, C]
-        # permute: (0, 3, 4, 1, 5, 2, 6)
-        return (x.view(B, P, Q, T, h, w, C)
-                .permute(0, 3, 4, 1, 5, 2, 6)
-                .reshape(B, T * H * W, C))
+        return rearrange(x, '(p q b) (t h w) c -> b (t h p w q) c', p=self.sparse_ratio, q=self.sparse_ratio, h=H // self.sparse_ratio, w=W // self.sparse_ratio)
 
     def _skiparse_2d_group(self, x, grid_sizes):
-        """'b (t h p1 p2 w q1 q2) c -> (b p1 q1) (t h p2 w q2) c'"""
         T, H, W = grid_sizes
-        B, _, C = x.shape
-        P = self.sparse_ratio
-        P2 = P * P
-        h = H // P2
-        w = W // P2
-        # 展开:    [B, T, h, p1, p2, w, q1, q2, C]  (indices: 0,1,2,3,4,5,6,7,8)
-        # 目标:    [B, p1, q1, T, h, p2, w, q2, C]
-        # permute: (0, 3, 6, 1, 2, 4, 5, 7, 8)
-        return (x.view(B, T, h, P, P, w, P, P, C)
-                .permute(0, 3, 6, 1, 2, 4, 5, 7, 8)
-                .reshape(B * P * P, T * h * P * w * P, C))
+        return rearrange(
+            x, 'b (t h p1 p2 w q1 q2) c -> (p1 q1 b) (t h p2 w q2) c',
+            p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H // (self.sparse_ratio ** 2), w=W // (self.sparse_ratio ** 2)
+        )
 
     def _skiparse_2d_group_reverse(self, x, grid_sizes):
-        """'(b p1 q1) (t h p2 w q2) c -> b (t h p1 p2 w q1 q2) c'"""
         T, H, W = grid_sizes
-        P = self.sparse_ratio
-        P2 = P * P
-        h = H // P2
-        w = W // P2
-        BP1Q1, _, C = x.shape
-        B = BP1Q1 // (P * P)
-        # 展开:    [B, p1, q1, T, h, p2, w, q2, C]  (indices: 0,1,2,3,4,5,6,7,8)
-        # 目标:    [B, T, h, p1, p2, w, q1, q2, C]
-        # permute: (0, 3, 4, 1, 5, 6, 2, 7, 8)
-        return (x.view(B, P, P, T, h, P, w, P, C)
-                .permute(0, 3, 4, 1, 5, 6, 2, 7, 8)
-                .reshape(B, T * H * W, C))
+        return rearrange(
+            x, '(p1 q1 b) (t h p2 w q2) c -> b (t h p1 p2 w q1 q2) c',
+            p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h=H // (self.sparse_ratio ** 2), w=W // (self.sparse_ratio ** 2)
+        )
 
+    # single2group和group2single是完全互逆的，代码实现上是相同的
     def _normal_skiparse_2d_single_to_group(self, x, grid_sizes):
-        """'(b p2 q2) (t h_p1 p1 w_q1 q1) c -> (b p1 q1) (t h_p1 p2 w_q1 q2) c'"""
         T, H, W = grid_sizes
-        P = self.sparse_ratio
-        P2 = P * P
-        h_p1 = H // P2
-        w_q1 = W // P2
-        BP2Q2, _, C = x.shape
-        B = BP2Q2 // (P * P)
-        # 展开:    [B, p2, q2, T, h_p1, p1, w_q1, q1, C]  (indices: 0,1,2,3,4,5,6,7,8)
-        # 目标:    [B, p1, q1, T, h_p1, p2, w_q1, q2, C]
-        # permute: (0, 5, 7, 3, 4, 1, 6, 2, 8)
-        return (x.view(B, P, P, T, h_p1, P, w_q1, P, C)
-                .permute(0, 5, 7, 3, 4, 1, 6, 2, 8)
-                .reshape(B * P * P, T * h_p1 * P * w_q1 * P, C))
+        return rearrange(
+            x, '(p2 q2 b) (t h_p1 p1 w_q1 q1) c -> (p1 q1 b) (t h_p1 p2 w_q1 q2) c',
+            p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h_p1=H // (self.sparse_ratio ** 2), w_q1=W // (self.sparse_ratio ** 2)
+        )
+
+    def _normal_skiparse_2d_group_to_single(self, x, grid_sizes):
+        # T, H, W = grid_sizes
+        # return rearrange(
+        #     x, '(p1 q1 b) (t h_p1 p2 w_q1 q2) c -> (p2 q2 b) (t h_p1 p1 w_q1 q1) c',
+        #     p1=self.sparse_ratio, q1=self.sparse_ratio, p2=self.sparse_ratio, q2=self.sparse_ratio, h_p1=H // (self.sparse_ratio ** 2), w_q1=W // (self.sparse_ratio ** 2)
+        # )
+        return self._normal_skiparse_2d_single_to_group(x, grid_sizes)
 
     # 采用all_to_all_single实现，通信量更小
     def _parallel_skiparse_2d_single_to_group(self, x, grid_sizes):
         T, H, W = grid_sizes
         P = self.sparse_ratio
-        sub_grid_sizes = (T, H // P, W // P)
         P2 = P * P
+        cp_size = cp_state.skiparse_cp_size
+        G = P2 // cp_size
+        B_local = x.shape[0]  # G * b
+        b = B_local // G
+
+        sub_grid_sizes = (T, H // P, W // P)
+
+        # Step 1: 在 sub_grid_sizes 上做 skiparse_2d_single，把 (p1,q1) 提到 batch 维
+        # [G*b, T*(H/P²)*P*(W/P²)*P, C] → [P²*G*b, T*(H/P²)*(W/P²), C]
         x = self._skiparse_2d_single(x, sub_grid_sizes)
-        B, _, C = x.shape
-        x = x.view(B // P2, P2, -1, C).transpose(0, 1)
-        out_x = contiguous(torch.empty_like(x))
-        dist.all_to_all_single(out_x, contiguous(x), group=cp_state.skiparse_cp_group)
-        out_x = contiguous(out_x.transpose(0, 1)).view(B, -1, C)
-        out_x = self._skiparse_2d_single_reverse(out_x, sub_grid_sizes)
-        return out_x
+        base, C = x.shape[1], x.shape[2]
+
+        # Step 2: 分布式转置
+        # P² = cp_size * G，按目标 rank 切分 (p1,q1)
+        x = x.view(cp_size, G, G * b, base, C)       # [target, j_local, i_batch, s, c]
+        x = all_to_all_single(x, group=cp_state.skiparse_cp_group)
+        # → [source, j_local, i_batch, s, c]
+        # 拆出 i_local，然后交换 (i_local, j_local) 使 (source, i_local) 连续合并为 p2q2
+        x = x.view(cp_size, G, G, b, base, C)        # [source, j_local, i_local, b, s, c]
+        x = x.permute(0, 2, 1, 3, 4, 5).contiguous() # [source, i_local, j_local, b, s, c]
+        x = x.view(P2 * G * b, base, C)              # batch=(p2q2, j_local, b)
+
+        # Step 3: skiparse_2d_single_reverse 把 (p2,q2) 从 batch 放回 seq
+        # [P²*G*b, T*(H/P²)*(W/P²), C] → [G*b, T*(H/P)*(W/P), C]
+        x = self._skiparse_2d_single_reverse(x, sub_grid_sizes)
+
+        return x
 
     def _skiparse_2d_single_to_group(self, x, grid_sizes):
         if use_skiparse_context_parallel():
@@ -750,7 +624,7 @@ class SkiparseMaskPreprocessor(MetaPreprocessor):
         if (not self.is_skiparse_1d_model and not self.is_skiparse_2d_model) or self.sparse_ratio == 1:
             return None, None
 
-        key = (shape, grid_sizes)
+        key = (shape, grid_sizes, dtype, device)
         if self.cache.is_exist(key):
             return self.cache.get(key)
 
@@ -802,7 +676,7 @@ class SkiparseRopeWrapper:
         )
         T, H, W = grid_sizes
         rearrange_type = skiparse_rerrange.rearrange_type if skiparse_rerrange is not None else RearrangeType.Identity
-        key = (T, H, W, rearrange_type)
+        key = (T, H, W, rearrange_type, x.device)
         if self.cache.is_exist(key):
             freqs_i = self.cache.get(key)
         else:

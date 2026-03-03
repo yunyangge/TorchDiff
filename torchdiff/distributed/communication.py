@@ -3,7 +3,7 @@
 
 # DeepSpeed Team
 
-from typing import Any, Tuple, List
+from typing import Any, Tuple, List, Optional
 import torch
 import torch.distributed as dist
 
@@ -181,16 +181,7 @@ def all_to_all_4D(
 
 
 class _AllGather(torch.autograd.Function):
-    """All-gather communication with autograd support.
-
-    Forward:  x_r (local shard) → y = [x_0, x_1, ..., x_{P-1}]
-    Backward: reduce-scatter, rank r gets Σ_j (dL_j/dy)[slice_r]
-
-    Args:
-        input_: input tensor
-        dim: dimension along which to concatenate
-        group: process group
-    """
+    """All-gather communication with autograd support. """
 
     @staticmethod
     def forward(ctx, input_, dim, group):
@@ -235,3 +226,111 @@ class _AllGather(torch.autograd.Function):
 def all_gather(input_: torch.Tensor, dim: int = 1, group=None):
     """Wrapper with cleaner interface."""
     return _AllGather.apply(input_, dim, group)
+
+
+class _AllToAllSingle(torch.autograd.Function):
+    """All-to-all-single communication with autograd support.
+
+    Forward:
+        将 input_ 沿 dim 维按 input_split_sizes 切分, 第 i 块发给 rank i;
+        从各 rank 收到的块按 output_split_sizes 拼接到 dim 维.
+
+    Backward:
+        对 grad_output 做一次 "逆向" all_to_all_single:
+        将 grad_output 沿 dim 按 (前向的 output_split_sizes) 切分发回,
+        按 (前向的 input_split_sizes) 接收, 还原为 grad_input.
+    """
+
+    @staticmethod
+    def forward(
+        ctx,
+        input_: torch.Tensor,
+        output_split_sizes: Optional[List[int]],
+        input_split_sizes: Optional[List[int]],
+        dim: int,
+        group: Optional[dist.ProcessGroup],
+    ) -> torch.Tensor:
+        ctx.group = group
+        ctx.dim = dim
+        ctx.input_split_sizes = input_split_sizes
+        ctx.output_split_sizes = output_split_sizes
+        ctx.input_shape = input_.shape
+
+        if dim != 0:
+            input_ = input_.transpose(0, dim)
+
+        inp = contiguous(input_)
+        if output_split_sizes is not None:
+            out_size = list(inp.shape)
+            out_size[0] = sum(output_split_sizes)
+        else:
+            out_size = list(inp.shape)          # 等分时输出与输入同形
+
+        output = torch.empty(out_size, dtype=inp.dtype, device=inp.device)
+
+        dist.all_to_all_single(
+            output,
+            inp,
+            output_split_sizes=output_split_sizes,
+            input_split_sizes=input_split_sizes,
+            group=group,
+        )
+
+        if dim != 0:
+            output = output.transpose(0, dim)
+
+        output = contiguous(output)
+
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        group = ctx.group
+        dim = ctx.dim
+
+        bwd_output_split_sizes = ctx.input_split_sizes   # 反向的 recv sizes = 前向的 send sizes
+        bwd_input_split_sizes = ctx.output_split_sizes    # 反向的 send sizes = 前向的 recv sizes
+
+        if dim != 0:
+            grad_output = grad_output.transpose(0, dim)
+
+        grad_output = contiguous(grad_output)
+
+        if bwd_output_split_sizes is not None:
+            grad_input_size = list(grad_output.shape)
+            grad_input_size[0] = sum(bwd_output_split_sizes)
+        else:
+            grad_input_size = list(grad_output.shape)
+
+        grad_input = torch.empty(
+            grad_input_size, dtype=grad_output.dtype, device=grad_output.device
+        )
+
+        dist.all_to_all_single(
+            grad_input,
+            grad_output,
+            output_split_sizes=bwd_output_split_sizes,
+            input_split_sizes=bwd_input_split_sizes,
+            group=group,
+        )
+
+        if dim != 0:
+            grad_input = grad_input.transpose(0, dim)
+
+        grad_input = contiguous(grad_input)
+
+        return grad_input, None, None, None, None
+
+
+def all_to_all_single(
+    input_: torch.Tensor,
+    output_split_sizes: Optional[List[int]] = None,
+    input_split_sizes: Optional[List[int]] = None,
+    dim: int = 0,
+    group: Optional[dist.ProcessGroup] = None,
+) -> torch.Tensor:
+    """Differentiable wrapper around ``dist.all_to_all_single``. """
+
+    return _AllToAllSingle.apply(
+        input_, output_split_sizes, input_split_sizes, dim, group
+    )

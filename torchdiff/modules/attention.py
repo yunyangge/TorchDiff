@@ -6,10 +6,12 @@ from einops import rearrange
 
 try:
     import flash_attn_interface
-    # 变长算子
-    from flash_attn_interface import flash_attn_varlen_func as flash_attn_varlen_func_v3
-    # 定长算子
-    from flash_attn_interface import flash_attn_func as flash_attn_func_v3
+    from flash_attn_interface import (
+        # 变长算子
+        flash_attn_varlen_func as flash_attn_varlen_func_v3,
+        # 定长算子
+        flash_attn_func as flash_attn_func_v3
+    )
     FLASH_ATTN_3_AVAILABLE = True
 except ModuleNotFoundError:
     FLASH_ATTN_3_AVAILABLE = False
@@ -225,8 +227,8 @@ def flash_attn_no_pad(
     # ==================================================================
     # Case 1: 完全无 mask
     # ==================================================================
-    if no_mask_q and no_mask_kv:
-        if not is_cross_attn:
+    if (is_cross_attn and no_mask_kv) or (no_mask_q and no_mask_kv):
+        if not is_cross_attn: # self-attn
             qkv = torch.stack([q, k, v], dim=2)
             return flash_attn_qkvpacked_func(
                 qkv,
@@ -357,8 +359,9 @@ def flash_attn_no_pad_v3(
 
     # ==================================================================
     # Case 1: 完全无 mask → 不需要 unpad
+    # 特别地，如果是 cross-attn，并且 KV 侧无 mask，则直接走 FA3 定长算子，避免 unpad 和 pad 的额外开销
     # ==================================================================
-    if no_mask_q and no_mask_kv:
+    if (is_cross_attn and no_mask_kv) or (no_mask_q and no_mask_kv):
         output, _ = flash_attn_func_v3(
             q, k, v,
             softmax_scale=softmax_scale,
@@ -371,49 +374,68 @@ def flash_attn_no_pad_v3(
     # Case 2: 有 mask → 按需 unpad（只 unpad 有 mask 的一侧）
     # ==================================================================
 
-    # ---- 处理 Q 侧 ----
-    if no_mask_q:
-        q_unpad = rearrange(q, "b s h d -> (b s) h d")
-        indices_q = None
-        cu_seqlens_q = torch.arange(
-            0, (batch_size + 1) * seq_len_q, seq_len_q,
-            device=q.device, dtype=torch.int32,
+    # --- self-attn + 有mask -> qkv一起cat再拆分，避免重复unpad ---
+    if not is_cross_attn:
+        qkv = torch.cat([q, k, v], dim=2)
+        x = rearrange(qkv, "b s three_h d -> b s (three_h d)")
+        x_unpad, indices_q, cu_seqlens_q, max_seqlen_q = unpad_input(x, mask_q)
+        x_unpad = rearrange(
+            x_unpad, "nnz (three h d) -> nnz three h d",
+            three=3, h=num_heads,
         )
-        max_seqlen_q = seq_len_q
+        q_unpad, k_unpad, v_unpad = x_unpad.unbind(dim=1)
+        output_unpad, _ = flash_attn_varlen_func_v3(
+            q_unpad, k_unpad, v_unpad,
+            cu_seqlens_q, cu_seqlens_q,
+            max_seqlen_q, max_seqlen_q,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            deterministic=deterministic,
+        )
     else:
-        q_unpad, indices_q, cu_seqlens_q, max_seqlen_q = unpad_input(
-            rearrange(q, "b s h d -> b s (h d)"), mask_q
-        )
-        q_unpad = rearrange(q_unpad, "nnz (h d) -> nnz h d", h=num_heads)
+        # ---- 处理 Q 侧 ----
+        if no_mask_q:
+            q_unpad = rearrange(q, "b s h d -> (b s) h d")
+            indices_q = None
+            cu_seqlens_q = torch.arange(
+                0, (batch_size + 1) * seq_len_q, seq_len_q,
+                device=q.device, dtype=torch.int32,
+            )
+            max_seqlen_q = seq_len_q
+        else:
+            q_unpad, indices_q, cu_seqlens_q, max_seqlen_q = unpad_input(
+                rearrange(q, "b s h d -> b s (h d)"), mask_q
+            )
+            q_unpad = rearrange(q_unpad, "nnz (h d) -> nnz h d", h=num_heads)
 
-    # ---- 处理 KV 侧 ----
-    if no_mask_kv:
-        k_unpad = rearrange(k, "b s h d -> (b s) h d")
-        v_unpad = rearrange(v, "b s h d -> (b s) h d")
-        cu_seqlens_kv = torch.arange(
-            0, (batch_size + 1) * seq_len_kv, seq_len_kv,
-            device=k.device, dtype=torch.int32,
-        )
-        max_seqlen_kv = seq_len_kv
-    else:
-        k_unpad, _, cu_seqlens_kv, max_seqlen_kv = unpad_input(
-            rearrange(k, "b s h d -> b s (h d)"), mask_kv
-        )
-        v_unpad, _, _, _ = unpad_input(
-            rearrange(v, "b s h d -> b s (h d)"), mask_kv
-        )
-        k_unpad = rearrange(k_unpad, "nnz (h d) -> nnz h d", h=num_heads_kv)
-        v_unpad = rearrange(v_unpad, "nnz (h d) -> nnz h d", h=num_heads_kv)
+        # ---- 处理 KV 侧 ----
+        if no_mask_kv:
+            k_unpad = rearrange(k, "b s h d -> (b s) h d")
+            v_unpad = rearrange(v, "b s h d -> (b s) h d")
+            cu_seqlens_kv = torch.arange(
+                0, (batch_size + 1) * seq_len_kv, seq_len_kv,
+                device=k.device, dtype=torch.int32,
+            )
+            max_seqlen_kv = seq_len_kv
+        else:
+            k_unpad, _, cu_seqlens_kv, max_seqlen_kv = unpad_input(
+                rearrange(k, "b s h d -> b s (h d)"), mask_kv
+            )
+            v_unpad, _, _, _ = unpad_input(
+                rearrange(v, "b s h d -> b s (h d)"), mask_kv
+            )
+            k_unpad = rearrange(k_unpad, "nnz (h d) -> nnz h d", h=num_heads_kv)
+            v_unpad = rearrange(v_unpad, "nnz (h d) -> nnz h d", h=num_heads_kv)
 
-    # ---- Flash Attention V3 计算 ----
-    output_unpad, _ = flash_attn_varlen_func_v3(
-        q_unpad, k_unpad, v_unpad,
-        cu_seqlens_q, cu_seqlens_kv,
-        max_seqlen_q, max_seqlen_kv,
-        softmax_scale=softmax_scale,
-        causal=causal,
-        deterministic=deterministic,
-    )
+        # ---- Flash Attention V3 计算 ----
+        output_unpad, _ = flash_attn_varlen_func_v3(
+            q_unpad, k_unpad, v_unpad,
+            cu_seqlens_q, cu_seqlens_kv,
+            max_seqlen_q, max_seqlen_kv,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            deterministic=deterministic,
+        )
 
     # ---- 恢复 output 形状 ----
     if indices_q is not None:

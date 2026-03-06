@@ -118,24 +118,10 @@ def unpad_input(hidden_states, attention_mask):
         max_seqlen_in_batch: int
     """
 
-    if attention_mask is None:
-        indices = None
-        max_seqlen_in_batch = seq_len = hidden_states.shape[1]
-        cu_seqlens = torch.arange(
-            0, (hidden_states.shape[0] + 1) * seq_len, seq_len,
-            device=hidden_states.device, dtype=torch.int32,
-        )
-        return (
-            rearrange(hidden_states, "b s ... -> (b s) ..."),
-            indices,
-            cu_seqlens,
-            max_seqlen_in_batch,
-        )
-    
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
 
-    # ✅ 用 seqlen 维度上界替代 .item()，避免 GPU-CPU 同步 + graph break
+    # 用 seqlen 维度上界替代 .item()，避免 GPU-CPU 同步 + graph break
     max_seqlen_in_batch = hidden_states.shape[1]
 
     cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
@@ -157,6 +143,5 @@ def pad_input(hidden_states, indices, batch, seqlen):
     Return:
         hidden_states: (batch, seqlen, ...)
     """
-    if indices is not None:
-        hidden_states = index_put_first_axis(hidden_states, indices, batch * seqlen)
+    hidden_states = index_put_first_axis(hidden_states, indices, batch * seqlen)
     return rearrange(hidden_states, "(b s) ... -> b s ...", b=batch)

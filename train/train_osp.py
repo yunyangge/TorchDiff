@@ -358,7 +358,7 @@ def main(config):
     start_training_logs = f"""
     {'=' * 20}Start Training{'=' * 20}
     Model: {model_name}
-    Model config: {model_config}
+    Model: {model}
     Before FSDP sharding,
     Model has {params_nums_to_str(trainable_params_before_sharding)} trainable parameters and {params_nums_to_str(locked_params_before_sharding)} locked parameters
     After FSDP sharding,

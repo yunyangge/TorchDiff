@@ -655,13 +655,14 @@ class SkiparseMaskPreprocessor(MetaPreprocessor):
         global_single_mask = contiguous(global_single_mask)
         global_group_mask = contiguous(global_group_mask)
 
-        if safe_get_rank() == 0:
-            print(f"=" * 20 + f" SkiparseMaskPreprocessor Cache Miss" + "=" * 20)
+        rank = safe_get_rank()
+        if rank < cp_state.global_cp_size:
+            print(f"=" * 20 + f" SkiparseMaskPreprocessor Cache Miss Rank #{rank}" + "=" * 20)
             print(f"local_single_mask is None: {local_single_mask is None}")
             print(f"local_group_mask is None: {local_group_mask is None}")
             print(f"global_single_mask is None: {global_single_mask is None}")
             print(f"global_group_mask is None: {global_group_mask is None}")
-            print(f"=" * 20 + f" SkiparseMaskPreprocessor Cache Miss" + "=" * 20)
+            print(f"=" * 20 + f" SkiparseMaskPreprocessor Cache Miss Rank #{rank}" + "=" * 20)
 
         self.cache.set(key, (local_single_mask, local_group_mask, global_single_mask, global_group_mask))
         return local_single_mask, local_group_mask, global_single_mask, global_group_mask

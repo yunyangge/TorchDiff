@@ -8,8 +8,8 @@ prompt_txt: "assets/t2v/simple_prompts.txt"
 output_dir: "samples/osp_next_1_3b_skiparse_2d_2_81f720p"
 
 num_frames: 81
-height: 1440
-width: 2560
+height: 720
+width: 1280
 save_fps: 16
 batch_size: 1
 

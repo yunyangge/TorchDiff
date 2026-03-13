@@ -407,6 +407,103 @@ def unifiedreward_score_sglang(device):
     
     return _fn
 
+def vbench_aesthetic_quality_score(device):
+    from torchdiff.rewards.vbench_aesthetic_quality import VBenchAestheticQualityScorer
+
+    scorer = VBenchAestheticQualityScorer(device=device)
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
+def vbench_dynamic_degree_score(device):
+    from torchdiff.rewards.vbench_dynamic_degree import VBenchDynamicDegreeScorer
+
+    scorer = VBenchDynamicDegreeScorer(device=device)
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            if images.dim() == 4 and images.shape[1] == 3:
+                images = images.permute(0, 2, 3, 1)
+            elif images.dim() == 5 and images.shape[2] == 3:
+                images = images.permute(0, 1, 3, 4, 2)
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
+def vbench_subject_consistency_score(device):
+    from torchdiff.rewards.vbench_subject_consistency import VBenchSubjectConsistencyScorer
+
+    scorer = VBenchSubjectConsistencyScorer(device=device)
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            if images.dim() == 4 and images.shape[1] == 3:
+                images = images.permute(0, 2, 3, 1)
+            elif images.dim() == 5 and images.shape[2] == 3:
+                images = images.permute(0, 1, 3, 4, 2)
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
+def vbench_overall_consistency_score(device):
+    from torchdiff.rewards.vbench_overall_consistency import VBenchOverallConsistencyScorer
+
+    scorer = VBenchOverallConsistencyScorer(device=device)
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            if images.dim() == 4 and images.shape[1] == 3:
+                images = images.permute(0, 2, 3, 1)
+            elif images.dim() == 5 and images.shape[2] == 3:
+                images = images.permute(0, 1, 3, 4, 2)
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
+def hps_score(device):
+    from torchdiff.rewards.hpsv2_scorer import HPSScorer
+
+    scorer = HPSScorer(device=device, hps_version="v2.1")
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+            images = [Image.fromarray(image) for image in images]
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
+def video_hps_score(device):
+    from torchdiff.rewards.hpsv2_scorer import HPSScorer_video_or_image
+
+    scorer = HPSScorer_video_or_image(device=device, hps_version="v2.1")
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            if images.dim() == 4 and images.shape[1] == 3:
+                images = images.permute(0, 2, 3, 1)
+            elif images.dim() == 5 and images.shape[2] == 3:
+                images = images.permute(0, 1, 3, 4, 2)
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+        scores = scorer(images, prompts)
+        return scores, {}
+
+    return _fn
+
 def multi_score(device, score_dict):
     score_functions = {
         "deqa": deqa_score_remote,
@@ -421,6 +518,12 @@ def multi_score(device, score_dict):
         "geneval": geneval_score,
         "clipscore": clip_score,
         "image_similarity": image_similarity_score,
+        "vbench_aesthetic": vbench_aesthetic_quality_score,
+        "vbench_dynamic": vbench_dynamic_degree_score,
+        "vbench_subject_consistency": vbench_subject_consistency_score,
+        "vbench_overall_consistency": vbench_overall_consistency_score,
+        "hps": hps_score,
+        "video_hps": video_hps_score,
     }
     score_fns={}
     for score_name, weight in score_dict.items():

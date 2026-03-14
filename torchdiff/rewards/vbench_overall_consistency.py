@@ -8,7 +8,6 @@ Output: list of float rewards
 """
 
 import os
-import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -31,13 +30,19 @@ class VBenchOverallConsistencyScorer:
         cache_dir = os.environ.get("VBENCH_CACHE_DIR", os.path.expanduser("~/.cache/vbench"))
         
         if viclip_pretrain_path is None:
-            viclip_pretrain_path = os.path.join(cache_dir, "ViCLIP", "ViClip-InternVid-10M-FLT.pth")
+            viclip_pretrain_path = "/apdcephfs_tj5/share_303570626/xianyihe/ckpts/OpenGVLab/ViCLIP/ViClip-InternVid-10M-FLT.pth"
         
-        # Import ViCLIP
-        from vbench.third_party.ViCLIP.viclip import ViCLIP
-        from vbench.third_party.ViCLIP.simple_tokenizer import SimpleTokenizer
+        # Import ViCLIP from local third_party
+        try:
+            from .third_party.ViCLIP.viclip import ViCLIP
+            from .third_party.ViCLIP.simple_tokenizer import SimpleTokenizer
+        except ImportError:
+            import sys
+            sys.path.insert(0, os.path.dirname(__file__))
+            from third_party.ViCLIP.viclip import ViCLIP
+            from third_party.ViCLIP.simple_tokenizer import SimpleTokenizer
         
-        tokenizer_path = os.path.join(cache_dir, "ViCLIP", "bpe_simple_vocab_16e6.txt.gz")
+        tokenizer_path = "/apdcephfs_tj5/share_303570626/xianyihe/ckpts/OpenGVLab/ViCLIP/bpe_simple_vocab_16e6.txt.gz"
         self.tokenizer = SimpleTokenizer(tokenizer_path)
         
         self.model = ViCLIP(

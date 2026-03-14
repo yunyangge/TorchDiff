@@ -9,7 +9,6 @@ Output: list of float rewards
 """
 
 import os
-import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -31,17 +30,17 @@ class VBenchDynamicDegreeScorer:
         
         if raft_model_path is None:
             cache_dir = os.environ.get("VBENCH_CACHE_DIR", os.path.expanduser("~/.cache/vbench"))
-            raft_model_path = os.path.join(cache_dir, "raft_model", "models", "raft-things.pth")
+            raft_model_path = "/apdcephfs_tj5/share_303570626/xianyihe/ckpts/iic/cv_dut-raft_video-stabilization_base/ckpt/raft-things.pth"
         
-        # Add RAFT to path
-        vbench_root = os.path.join(os.path.dirname(__file__), "..", "..", "..",
-                                    "VBench", "vbench")
-        raft_path = os.path.join(vbench_root, "third_party", "RAFT", "core")
-        if os.path.exists(raft_path) and raft_path not in sys.path:
-            sys.path.insert(0, os.path.join(vbench_root, "third_party", "RAFT"))
-        
-        from vbench.third_party.RAFT.core.raft import RAFT
-        from vbench.third_party.RAFT.core.utils_core.utils import InputPadder
+        # Import RAFT from local third_party
+        try:
+            from .third_party.RAFT.core.raft import RAFT
+            from .third_party.RAFT.core.utils_core.utils import InputPadder
+        except ImportError:
+            import sys
+            sys.path.insert(0, os.path.dirname(__file__))
+            from third_party.RAFT.core.raft import RAFT
+            from third_party.RAFT.core.utils_core.utils import InputPadder
         self.InputPadder = InputPadder
         
         args = edict({

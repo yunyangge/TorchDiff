@@ -18,20 +18,21 @@ from PIL import Image
 
 
 class VBenchSubjectConsistencyScorer:
-    def __init__(self, device: str = "cuda"):
+    def __init__(self, device: str = "cuda", dino_model_path: str = None):
         """
         Subject consistency reward based on VBench implementation.
-        Uses DINO ViT-B/16 to compute frame-to-frame feature similarity.
+        Uses DINOv2 ViT-B to compute frame-to-frame feature similarity.
         
         :param device: Device to run the model on
+        :param dino_model_path: Path to local HuggingFace DINOv2 model directory.
+                                If None, downloads 'facebook/dinov2-base' from HuggingFace Hub.
         """
         self.device = device
         
-        # Load DINO ViT-B/16
-        self.model = torch.hub.load(
-            "facebookresearch/dino:main",
-            "dino_vitb16"
-        ).to(device)
+        # Load DINOv2
+        from transformers import AutoModel
+        model_name_or_path = dino_model_path if dino_model_path is not None else "facebook/dinov2-base"
+        self.model = AutoModel.from_pretrained(model_name_or_path).to(device)
         self.model.eval()
         
         # DINO transform (ImageNet normalization, no center crop)
@@ -99,7 +100,9 @@ class VBenchSubjectConsistencyScorer:
         
         for i in range(len(frames_transformed)):
             image = frames_transformed[i:i+1].to(self.device)
-            features = self.model(image)
+            output = self.model(image)
+            # DINOv2 via transformers: use CLS token (last_hidden_state[:, 0])
+            features = output.last_hidden_state[:, 0]
             features = F.normalize(features, dim=-1, p=2)
             
             if i == 0:
@@ -142,9 +145,9 @@ class VBenchSubjectConsistencyScorer:
 
 
 if __name__ == "__main__":
-    scorer = VBenchSubjectConsistencyScorer(device="cuda")
+    scorer = VBenchSubjectConsistencyScorer(device="cuda", dino_model_path="/apdcephfs_tj5/share_303570626/xianyihe/ckpts/facebook/dinov2-base")
     # Simulate a 4-frame video
     frames = [np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8) for _ in range(4)]
     video = np.stack(frames)  # (4, 256, 256, 3)
-    reward = scorer([video], ["a cat sitting on a table"])
+    reward = scorer([video], ["a dog sitting on a table"])
     print(f"Subject Consistency Reward: {reward}")

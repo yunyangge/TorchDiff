@@ -181,7 +181,7 @@ def main(config):
     
     set_seed(seed, device_specific=False) # for init
     # init model
-    log_on_main_process(logger, "Initializing VAE model...")
+    log_on_main_process(logger, f"Initializing VAE model with dtype: {str_to_precision(vae_config.get('dtype', 'fp32'))} ...")
     vae = WanVAE(
         vae_pth=vae_config.get("vae_path", None),
         dtype=str_to_precision(vae_config.get("dtype", "fp32")),
@@ -190,7 +190,7 @@ def main(config):
     log_on_main_process(logger, f"VAE model initialized, memory allocated: {get_memory_allocated()} GiB")
 
 
-    log_on_main_process(logger, "Initializing text encoder model...")
+    log_on_main_process(logger, f"Initializing text encoder model with dtype: {weight_dtype} ...")
     # text_encoder的shard ranks数量默认为8
     text_encoder_device_mesh = None
     if text_encoder_config.get("use_fsdp", False):
@@ -199,7 +199,7 @@ def main(config):
         text_encoder_device_mesh = init_device_mesh("cuda", (num_replicate, num_shard), mesh_dim_names=("replicate", "shard"))
     text_encoder = T5EncoderModel(
         text_len=text_encoder_config.get("text_len", 512),
-        dtype=text_encoder_config.get("dtype", weight_dtype),
+        dtype=weight_dtype,
         device=device, # when no fsdp, we init the text_encoder on device
         checkpoint_path=text_encoder_config.get("checkpoint_path", None),
         use_fsdp=text_encoder_config.get("use_fsdp", False), # when using fsdp, we shard the text encoder by ddp_fsdp mesh

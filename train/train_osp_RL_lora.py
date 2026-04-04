@@ -42,6 +42,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor
 
 from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data.distributed import DistributedSampler
 
 from torchdiff.utils.log_utils import get_logger, log_on_main_process, verify_min_gpu_count
 from torchdiff.utils.random_utils import set_seed
@@ -76,6 +77,20 @@ from transformers import AutoTokenizer
 from peft import LoraConfig, get_peft_model, PeftModel
 from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
 
+
+def get_ddp_rank_and_fsdp_local_rank(rank, fsdp_size, world_size):
+    """
+    Assuming mesh shape is (ddp_size, fsdp_size) and global ranks are laid out contiguously:
+        global_rank = ddp_rank * fsdp_size + fsdp_local_rank
+
+    Returns:
+        ddp_rank: index of data-parallel replica
+        fsdp_local_rank: local rank inside one FSDP replica
+    """
+    ddp_size = max(1, world_size // fsdp_size)
+    ddp_rank = rank // fsdp_size
+    fsdp_local_rank = rank % fsdp_size
+    return ddp_rank, fsdp_local_rank, ddp_size
 
 # ==================== RL Utilities ====================
 
@@ -604,13 +619,35 @@ def calculate_zero_std_ratio(prompts, gathered_rewards):
 
 
 def save_lora_checkpoint(model, save_dir, global_step):
-    """Save LoRA weights only (for LoRA-specific checkpoint, rank 0 only)."""
+    """Save LoRA weights only (for LoRA-specific checkpoint, rank 0 only).
+    
+    NOTE: We manually extract and clone LoRA parameters instead of using
+    model.save_pretrained(), because after FSDP's _get_full_model_state_dict()
+    the underlying tensor storage may become invalid, causing
+    'RuntimeError: Attempted to access the data pointer on an invalid python storage.'
+    """
     save_root = os.path.join(save_dir, f"lora-checkpoint-{global_step}")
     os.makedirs(save_root, exist_ok=True)
-    # Try to save via PeftModel.save_pretrained
-    if hasattr(model, 'save_pretrained'):
-        model.save_pretrained(save_root)
-    print(f"[Rank {dist.get_rank()}] LoRA checkpoint saved to {save_root}")
+    # Manually extract LoRA parameters (keys containing 'lora_')
+    lora_state_dict = {}
+    for name, param in model.named_parameters():
+        if 'lora_' in name:
+            # Clone and move to CPU to avoid invalid storage issues
+            lora_state_dict[name] = param.detach().clone().cpu()
+    
+    if lora_state_dict:
+        torch.save(lora_state_dict, os.path.join(save_root, "adapter_model.bin"))
+    
+    # Also save the adapter config if available
+    if hasattr(model, 'peft_config'):
+        import json
+        for adapter_name, peft_cfg in model.peft_config.items():
+            config_dict = peft_cfg.to_dict() if hasattr(peft_cfg, 'to_dict') else vars(peft_cfg)
+            with open(os.path.join(save_root, "adapter_config.json"), "w") as f:
+                json.dump(config_dict, f, indent=2, default=str)
+            break  # Save config for the first (default) adapter
+    
+    print(f"[Rank {dist.get_rank()}] LoRA checkpoint saved to {save_root} ({len(lora_state_dict)} parameters)")
 
 
 # ==================== Main Training ====================
@@ -648,14 +685,14 @@ def main(config):
     rl_config = config.get("rl_config", {})
     num_inference_steps = rl_config.get("num_inference_steps", 20)
     guidance_scale = rl_config.get("guidance_scale", 5.0)
-    sample_batch_size = rl_config.get("sample_batch_size", 1)
-    train_batch_size = rl_config.get("train_batch_size", 1)
+    sample_batch_size = rl_config.get("sample_batch_size", 4)
+    train_batch_size = rl_config.get("train_batch_size", 4)
     num_batches_per_epoch = rl_config.get("num_batches_per_epoch", 4)
     num_inner_epochs = rl_config.get("num_inner_epochs", 1)
-    num_image_per_prompt = rl_config.get("num_image_per_prompt", 8)
+    num_image_per_prompt = rl_config.get("num_image_per_prompt", 4)
     sample_time_per_prompt = rl_config.get("sample_time_per_prompt", 1)
     timestep_fraction = rl_config.get("timestep_fraction", 1.0)
-    clip_range = rl_config.get("clip_range", 1e-1)
+    clip_range = rl_config.get("clip_range", 5e-3)
     adv_clip_max = rl_config.get("adv_clip_max", 5.0)
     kl_reward = rl_config.get("kl_reward", 0.0)
     kl_beta = rl_config.get("kl_beta", 0.0)
@@ -665,10 +702,10 @@ def main(config):
     reward_fn_config = rl_config.get("reward_fn", {})
     prompt_file = rl_config.get("prompt_file", None)
     eval_prompt_file = rl_config.get("eval_prompt_file", None)
-    video_height = rl_config.get("height", 480)
-    video_width = rl_config.get("width", 832)
+    video_height = rl_config.get("height", 720)
+    video_width = rl_config.get("width", 1280)
     video_num_frames = rl_config.get("num_frames", 81)
-    eval_freq = rl_config.get("eval_freq", 1000)
+    eval_freq = rl_config.get("eval_freq", 10)
     eval_num_steps = rl_config.get("eval_num_steps", 50)
     # SDE/ODE hybrid: 前 sde_steps 步使用 SDE（有噪声），剩余步使用 ODE（确定性）
     sde_steps = rl_config.get("sde_steps", num_inference_steps)  # 默认全 SDE
@@ -689,7 +726,7 @@ def main(config):
     gradient_accumulation_steps = config.get("gradient_accumulation_steps", 1)
     init_max_grad_norm = config.get("init_max_grad_norm", 1.0)
     log_interval = config.get("log_interval", 1)
-    save_interval = config.get("save_interval", 100000)
+    save_interval = config.get("save_interval", 100)
     weight_dtype = config.get("weight_dtype", "bfloat16")
     reshard_after_forward = config.get("reshard_after_forward", None)
     model_cpu_offload = config.get("model_cpu_offload", False)
@@ -876,6 +913,8 @@ def main(config):
     # Step 3: FSDP2 wrap (wraps the entire PeftModel including LoRA params)
     # All params are requires_grad=True at this point so FSDP2 FlatParameters
     # maintain gradient tracking through the forward pass.
+    log_on_main_process(logger, "Starting FSDP2 wrapping...")
+    import sys; sys.stdout.flush(); sys.stderr.flush()
     FSDP2_mix_wrapper(
         model,
         dp_mesh=ddp_fsdp_mesh,
@@ -886,6 +925,8 @@ def main(config):
         reshard_after_forward=reshard_after_forward,
         cpu_offload=model_cpu_offload,
     )
+    log_on_main_process(logger, "FSDP2 wrapping completed successfully.")
+    sys.stdout.flush(); sys.stderr.flush()
 
     if not has_loaded_pretrained_model:
         model.to_empty(device=device)
@@ -893,6 +934,7 @@ def main(config):
         base_model.reset_parameters()
 
     log_on_main_process(logger, f"Diffusion model (LoRA + FSDP2) initialized, memory: {get_memory_allocated()} GiB")
+    sys.stdout.flush(); sys.stderr.flush()
 
     # Step 5: Gradient checkpointing
     if gradient_checkpointing:
@@ -962,16 +1004,32 @@ def main(config):
     set_seed(seed, device_specific=True, process_group=dp_group)
 
     # ========== RL Dataset & Reward ====================
+    log_on_main_process(logger, f"Initializing reward functions with config: {reward_fn_config}")
+    import sys
     try:
+        print(f"[Rank {rank}] Importing torchdiff.rewards.rewards ...", flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
         import torchdiff.rewards.rewards
+        print(f"[Rank {rank}] Import successful, calling multi_score ...", flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
         reward_fn = getattr(torchdiff.rewards.rewards, 'multi_score')(device, reward_fn_config)
+        print(f"[Rank {rank}] multi_score initialized successfully.", flush=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
     except Exception as e:
         log_on_main_process(logger, f"ERROR: Failed to import torchdiff.rewards.rewards: {e}")
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
         def reward_fn(videos, prompts, metadata, only_strict=True):
             B = len(prompts)
             return {"avg": np.ones(B, dtype=np.float32)}, {}
+    # Synchronize all ranks after reward init to catch early failures
+    dist.barrier()
+    log_on_main_process(logger, "All ranks passed reward initialization.")
 
     # Prompt dataset
     text_tokenizer_path = data_config.get("dataset_config", {}).get("text_tokenizer_path", None)
@@ -1006,20 +1064,56 @@ def main(config):
         collate_fn=TextPromptDataset.collate_fn,
     )
 
+    # # Eval dataset
+    # test_dataloader = None
+    # if eval_prompt_file is not None:
+    #     eval_dataset = TextPromptDataset(
+    #         file_path=eval_prompt_file,
+    #         text_tokenizer_path=text_tokenizer_path,
+    #         text_max_length=text_max_length,
+    #     )
+    #     test_dataloader = DataLoader(
+    #         eval_dataset,
+    #         batch_size=sample_batch_size,
+    #         collate_fn=TextPromptDataset.collate_fn,
+    #         shuffle=False,
+    #         num_workers=4,
+    #     )
+
     # Eval dataset
     test_dataloader = None
+    eval_sampler = None
+    ddp_rank_for_eval, fsdp_local_rank, ddp_size_for_eval = get_ddp_rank_and_fsdp_local_rank(
+        rank=rank,
+        fsdp_size=fsdp_size,
+        world_size=world_size,
+    )
+
     if eval_prompt_file is not None:
         eval_dataset = TextPromptDataset(
             file_path=eval_prompt_file,
             text_tokenizer_path=text_tokenizer_path,
             text_max_length=text_max_length,
         )
+
+        # Important:
+        # - FSDP ranks inside the same replica must see the same eval batches
+        # - Different DDP replicas should see different eval subsets
+        eval_sampler = DistributedSampler(
+            eval_dataset,
+            num_replicas=ddp_size_for_eval,
+            rank=ddp_rank_for_eval,
+            shuffle=False,
+            drop_last=False,
+        )
+
         test_dataloader = DataLoader(
             eval_dataset,
             batch_size=sample_batch_size,
+            sampler=eval_sampler,
             collate_fn=TextPromptDataset.collate_fn,
-            shuffle=False,
             num_workers=4,
+            pin_memory=True,
         )
 
     # Stat tracker
@@ -1220,8 +1314,8 @@ def main(config):
                 torch.cuda.empty_cache()
 
             # Skip first 2 epochs (collecting group statistics)
-            if epoch < 2:
-                continue
+            # if epoch < 2:
+            #     continue
 
             # 清理显存
             torch.cuda.synchronize()
@@ -1318,8 +1412,8 @@ def main(config):
             dist.barrier()
             torch.cuda.synchronize()
 
-        if epoch < 2:
-            continue
+        # if epoch < 2:
+        #     continue
 
         # Wait for all rewards
         for sample in tqdm(samples, desc="Waiting for rewards", disable=(rank != 0)):
@@ -1348,13 +1442,13 @@ def main(config):
                 for idx, i in enumerate(sample_indices):
                     video = last_videos_cpu[i].numpy().transpose(1, 2, 3, 0)
                     frames = [((frame + 1) / 2 * 255).clip(0, 255).astype(np.uint8) for frame in video]
-                    imageio.mimsave(os.path.join(tmpdir, f"{idx}.mp4"), frames, fps=8, codec="libx264", format='FFMPEG')
+                    imageio.mimsave(os.path.join(tmpdir, f"{idx}.mp4"), frames, fps=16, codec="libx264", format='FFMPEG')
 
                 if wandb.run is not None:
                     sampled_prompts = [last_prompts[i] for i in sample_indices]
                     wandb.log(
                         {"videos": [
-                            wandb.Video(os.path.join(tmpdir, f"{idx}.mp4"), caption=f"{p:.100}", fps=8)
+                            wandb.Video(os.path.join(tmpdir, f"{idx}.mp4"), caption=f"{p:.100}", fps=16)
                             for idx, p in enumerate(sampled_prompts)
                         ]},
                         step=global_step,
@@ -1385,9 +1479,17 @@ def main(config):
                 "kl": samples["kl"].mean().cpu().item(),
                 "kl_abs": samples["kl"].abs().mean().cpu().item(),
             }
+
             for key, value in gathered_rewards.items():
+                # value is a numpy array
                 if '_strict_accuracy' not in key and '_accuracy' not in key:
-                    log_dict[f"reward_{key}"] = value.mean()
+                    log_dict[f"reward_{key}"] = float(value.mean())
+                    log_dict[f"reward/{key}_mean"] = float(value.mean())
+                    log_dict[f"reward/{key}_std"] = float(value.std())
+                    log_dict[f"reward/{key}_abs_mean"] = float(np.abs(value).mean())
+                    log_dict[f"reward/{key}_max"] = float(value.max())
+                    log_dict[f"reward/{key}_min"] = float(value.min())
+
             if wandb.run is not None:
                 wandb.log(log_dict, step=global_step)
 
@@ -1788,7 +1890,7 @@ def main(config):
                         frames = [((frame + 1) / 2 * 255).clip(0, 255).astype(np.uint8) for frame in video]
                         imageio.mimsave(
                             os.path.join(tmpdir, f"eval_{idx}.mp4"),
-                            frames, fps=8, codec="libx264", format='FFMPEG',
+                            frames, fps=16, codec="libx264", format='FFMPEG',
                         )
 
                     if wandb.run is not None:
@@ -1798,7 +1900,7 @@ def main(config):
                                     wandb.Video(
                                         os.path.join(tmpdir, f"eval_{idx}.mp4"),
                                         caption=f"{eval_prompts[idx]:.100}",
-                                        fps=8,
+                                        fps=16,
                                     )
                                     for idx in range(num_eval_vis)
                                 ],

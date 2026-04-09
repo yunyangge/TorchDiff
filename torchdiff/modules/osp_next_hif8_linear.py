@@ -16,7 +16,6 @@ from torchdiff.utils.compile import maybe_compile
 
 from .attention import flash_attention, attention, attention_with_mask
 from .hif8_linear import HIF8Linear
-from .hif8_attention import hif8_attention_with_mask
 
 
 def _make_linear(
@@ -808,7 +807,6 @@ class OSPNextSelfAttention(nn.Module):
         skiparse_block_type=SkiparseBlockType.Full,
         # hif8 quantization
         quant=None,
-        quant_attn=None,
         scale_max_forward=15.0,
         scale_max_backward=224.0,
     ):
@@ -822,10 +820,6 @@ class OSPNextSelfAttention(nn.Module):
         self.eps = eps
         self.skiparse_1d = skiparse_1d
         self.skiparse_2d = skiparse_2d
-        # save quant settings for use in forward (attention quantization needs them)
-        self.quant_attn = quant_attn
-        self.scale_max_forward = scale_max_forward
-        self.scale_max_backward = scale_max_backward
 
         # layers
         self.q = _make_linear(quant, dim, dim, scale_max_forward, scale_max_backward)
@@ -927,20 +921,14 @@ class OSPNextSelfAttention(nn.Module):
             k = torch.cat([register_k, k], dim=1)
             v = torch.cat([register_v, v], dim=1)
         
-        if self.quant_attn == "hif8":
-            x = hif8_attention_with_mask(
-                q, k, v,
-                attn_mask=attn_mask,
-                attn_mask_kv=attn_mask,
-                scale_max_forward=self.scale_max_forward,
-                scale_max_backward=self.scale_max_backward,
-            )
-        else:
-            x = attention_with_mask(
-                q, k, v,
-                attn_mask=attn_mask,
-                attn_mask_kv=attn_mask,
-            )
+        x = attention_with_mask(
+            q,
+            k, 
+            v, 
+            # self attn，q/k/v共享mask
+            attn_mask=attn_mask,
+            attn_mask_kv=attn_mask,
+        )
 
         x = self.post_self_attn_all_to_all(x, shard_seq_lens=shard_seq_lens, num_register_tokens=num_register_tokens)
 
@@ -970,17 +958,7 @@ class OSPNextCrossAttention(OSPNextSelfAttention):
         # NOTE cross attn不需要all2all，因为img只作为q，天然支持按序列切分计算
 
         # cross attn，q作为query，k/v作为key/value，k/v没有mask
-        if self.quant_attn == "hif8":
-            x = hif8_attention_with_mask(
-                q, k, v,
-                attn_mask=attn_mask,
-                attn_mask_kv=None,
-                is_cross_attn=True,
-                scale_max_forward=self.scale_max_forward,
-                scale_max_backward=self.scale_max_backward,
-            )
-        else:
-            x = attention_with_mask(q, k, v, attn_mask=attn_mask, attn_mask_kv=None, is_cross_attn=True)
+        x = attention_with_mask(q, k, v, attn_mask=attn_mask, attn_mask_kv=None, is_cross_attn=True)
 
         # NOTE cross attn不需要all2all，因为img只作为q，天然支持按序列切分计算
         
@@ -1010,7 +988,6 @@ class OSPNextAttentionBlock(nn.Module):
         is_skiparse2full_block=False,
         # hif8 quantization
         quant=None,
-        quant_attn=None,
         scale_max_forward=15.0,
         scale_max_backward=224.0,
     ):
@@ -1032,7 +1009,6 @@ class OSPNextAttentionBlock(nn.Module):
             skiparse_2d=skiparse_2d,
             skiparse_block_type=skiparse_block_type,
             quant=quant,
-            quant_attn=quant_attn,
             scale_max_forward=scale_max_forward,
             scale_max_backward=scale_max_backward,
         )
@@ -1044,7 +1020,6 @@ class OSPNextAttentionBlock(nn.Module):
         self.cross_attn = OSPNextCrossAttention(
             dim, num_heads, (-1, -1), qk_norm, eps,
             quant=quant,
-            quant_attn=quant_attn,
             scale_max_forward=scale_max_forward,
             scale_max_backward=scale_max_backward,
         )
@@ -1259,7 +1234,6 @@ class OSPNextModel(ModelMixin, ConfigMixin):
         skiparse_2d=False,
         # hif8 quantization (None or "hif8")
         quant=None,
-        quant_attn=None,
         scale_max_forward=15.0,
         scale_max_backward=224.0,
         **kwargs,
@@ -1360,7 +1334,6 @@ class OSPNextModel(ModelMixin, ConfigMixin):
                     is_full2skiparse_block=is_full2skiparse_block,
                     is_skiparse2full_block=is_skiparse2full_block,
                     quant=quant,
-                    quant_attn=quant_attn,
                     scale_max_forward=scale_max_forward,
                     scale_max_backward=scale_max_backward,
                 )

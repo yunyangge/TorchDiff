@@ -26,6 +26,7 @@ gradient_accumulation_steps: 1
 gradient_checkpointing: true
 init_max_grad_norm: 1.0
 log_interval: 1
+model_cpu_offload: True
 model_config:
     dim: 5120
     ffn_dim: 13824
@@ -46,7 +47,7 @@ model_name: osp_next
 optimizer_config:
     lr: 1.0e-05
     weight_decay: 0.001
-output_dir: output/osp_next_14b_lr1e_5_81f720p_sparse2d2_sp2_ssp4_grpo
+output_dir: output/osp_next_14b_lr1e_5_81f720p_sparse2d2_sp2_ssp4_grpo4_node8
 profiling: false
 reshard_after_forward: true
 save_interval: 10
@@ -79,7 +80,9 @@ rl_config:
   num_inference_steps: 25
   kl_beta: 0.004
   num_batches_per_epoch: 4
-  num_image_per_prompt: 4
+  num_image_per_prompt: 4 
+  sample_batch_size: 2
+  train_batch_size: 2
   reward_fn: 
     videoalign: 1.0
   

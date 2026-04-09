@@ -49,7 +49,7 @@ model_name: osp_next
 optimizer_config:
     lr: 2.0e-04
     weight_decay: 0.001
-output_dir: output/osp_next_1_3b_81f480p_sparse2d2_ssp2_training_with_full_grpo4
+output_dir: output/osp_next_1_3b_81f480p_sparse2d2_ssp2_training_with_full_grpo4_test_multinode
 profiling: false
 reshard_after_forward: false
 save_interval: 10

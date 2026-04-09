@@ -5,16 +5,16 @@
 #
 # Forward:
 #   scale_x = scale_max_forward / max(|x|)
-#   x_q     = quant_dequant_hif8(x * scale_x) / scale_x
+#   x_q     = quant_dequant_float(x * scale_x) / scale_x
 #
 #   scale_w = scale_max_forward / max(|W|)
-#   w_q     = quant_dequant_hif8(W * scale_w) / scale_w
+#   w_q     = quant_dequant_float(W * scale_w) / scale_w
 #
 #   out     = x_q @ w_q.T + bias          (both operands are dequantized)
 #
 # Backward:
 #   scale_g  = scale_max_backward / max(|grad_out|)
-#   grad_q   = quant_dequant_hif8(grad_out * scale_g) / scale_g
+#   grad_q   = quant_dequant_float(grad_out * scale_g) / scale_g
 #
 #   grad_x = grad_q @ w_q                 (use dequant W saved from forward)
 #   grad_W = grad_q.T @ x_q              (use dequant x saved from forward)
@@ -28,22 +28,25 @@ import torch.nn.functional as F
 # NPU operator import (placeholder until the actual op package is available)
 # ---------------------------------------------------------------------------
 try:
-    from hif8_ops import quant_dequant_hif8  # actual NPU kernel
+    from quant_cy_npu import QType, quant_dequant_float  # 这里需要编译那个quant_cy_npu算子之后才能import;  编译方法： 解压后， 直接  bash build.sh
 except ImportError:
     # Temporary stub so the code can be imported without the real op.
     # Replace with the real import once hif8_ops is installed.
-    def quant_dequant_hif8(x: torch.Tensor) -> torch.Tensor:
+    def quant_dequant_float(x: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError(
-            "quant_dequant_hif8 is not available. "
+            "quant_dequant_float is not available. "
             "Please install the hif8_ops NPU package."
         )
 
 
 def _quant(x: torch.Tensor, scale_max: float) -> tuple:
     """Compute per-tensor scale and return (dequantized_x, scale)."""
-    x_max = x.abs().amax().clamp(min=1e-8)
+    qtype = QType("hif8")
+    x_max = x.abs().amax().clamp(min=1e-8)                                  
     scale = scale_max / x_max
-    x_q = quant_dequant_hif8(x * scale) / scale
+    scaled_x = x * scale
+    x_q = quant_dequant_float(scaled_x, qtype, force_fp32=True) / scale      # 最终经过量化-反量化处理的tensor，  用于后续linear或者attention
+    # quant_dequant_float 输出数据类型是FP32， 后续根据需要决定是否加 .to(torch.bfloat16)
     return x_q, scale
 
 
@@ -69,6 +72,7 @@ class _HIF8LinearFunction(torch.autograd.Function):
 
         # --- Quantize weight ---
         w_q, _ = _quant(weight, scale_max_forward)
+        # w_q, _ = _quant(weight, scale_max_forward).to(torch.bfloat16) # optional
 
         # Save dequantized tensors for backward
         ctx.save_for_backward(

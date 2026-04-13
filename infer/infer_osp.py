@@ -77,8 +77,8 @@ def load_lora_and_merge(
     missing, unexpected = model.load_state_dict(lora_sd, strict=False)
 
     if rank == 0:
-        print(f"[LoRA] missing keys: {len(missing)}")
-        print(f"[LoRA] unexpected keys: {len(unexpected)}")
+        print(f"[LoRA] missing keys: {missing}")
+        print(f"[LoRA] unexpected keys: {unexpected}")
 
     # sanity check
     missing_lora = [k for k in missing if "lora_" in k]

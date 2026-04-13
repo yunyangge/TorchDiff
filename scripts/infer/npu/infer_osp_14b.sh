@@ -15,6 +15,7 @@ export HCCL_CONNECT_TIMEOUT=3600
 export HCCL_EXEC_TIMEOUT=0
 export ACL_DEVICE_SYNC_TIMEOUT=3600
 
+export ASCEND_LAUNCH_BLOCKING=1
 
 # export CUDA_VISIBLE_DEVICES=0,1,2,3
 git
@@ -30,4 +31,4 @@ torchrun \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
   infer/infer_osp.py \
-  --config configs/infer/npu/osp_14b.yaml
+  --config configs/infer/npu/osp_14b_rl.yaml

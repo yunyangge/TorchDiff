@@ -727,7 +727,7 @@ def main(config):
     video_height = rl_config.get("height", 720)
     video_width = rl_config.get("width", 1280)
     video_num_frames = rl_config.get("num_frames", 81)
-    eval_freq = rl_config.get("eval_freq", 10)
+    eval_freq = rl_config.get("eval_freq", 10000)
     eval_num_steps = rl_config.get("eval_num_steps", 50)
     # SDE/ODE hybrid: 前 sde_steps 步使用 SDE（有噪声），剩余步使用 ODE（确定性）
     sde_steps = rl_config.get("sde_steps", num_inference_steps)  # 默认全 SDE

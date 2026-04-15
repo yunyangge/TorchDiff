@@ -3,6 +3,8 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
 export TOKENIZERS_PARALLELISM=false
 
+export ASCEND_LAUNCH_BLOCKING=1
+
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
 export ASCEND_GLOBAL_LOG_LEVEL=3
@@ -48,4 +50,4 @@ torchrun \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
   eval/eval_osp_lora.py \
-  --config configs/eval/npu/osp_14b_rl.yaml
+  --config configs/eval/npu/osp_14b_rl_6.yaml

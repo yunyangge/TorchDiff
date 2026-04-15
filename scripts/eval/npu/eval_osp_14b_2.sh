@@ -48,4 +48,4 @@ torchrun \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
   eval/eval_osp_lora.py \
-  --config configs/eval/npu/osp_14b_rl.yaml
+  --config configs/eval/npu/osp_14b_rl_2.yaml

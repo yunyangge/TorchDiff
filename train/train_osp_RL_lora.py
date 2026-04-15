@@ -145,7 +145,7 @@ def sde_step_with_logprob(
             )
             # 同步SDE噪声到CP组内
             if cp_group is not None:
-                torch.distributed.broadcast(variance_noise, group_src=0, group=cp_group)
+                torch.distributed.broadcast(variance_noise, src=dist.get_global_rank(cp_group, 0), group=cp_group)
             prev_sample = prev_sample_mean + std_dev_t * torch.sqrt(-1 * dt_b) * variance_noise
         else:
             # 最后一步（t=0）不加噪，直接使用预测均值，避免残留无法去除的随机噪声
@@ -213,7 +213,7 @@ def osp_sample_with_logprob(
 
     # CP 组内同步初始噪声
     if cp_group is not None:
-        torch.distributed.broadcast(latents, group_src=0, group=cp_group)
+        torch.distributed.broadcast(latents, src=dist.get_global_rank(cp_group, 0), group=cp_group)
 
     # Set up sigma schedule
     sigmas = torch.linspace(1.0, 0.0, num_inference_steps + 1, device=device)
@@ -659,6 +659,11 @@ def save_lora_checkpoint(model, save_dir, global_step):
     if dist.get_rank() == 0 and lora_state_dict:
         torch.save(lora_state_dict, os.path.join(save_root, "adapter_model.bin"))
         
+        # --- DEBUG: print LoRA param norms to verify they changed ---
+        for _name, _val in list(lora_state_dict.items())[:3]:
+            print(f"[DEBUG save_lora] {_name}: norm={_val.norm().item():.8f}, mean={_val.mean().item():.10f}")
+        # --- END DEBUG ---
+        
         # Also save the adapter config if available
         if hasattr(model, 'peft_config'):
             import json
@@ -990,10 +995,36 @@ def main(config):
         elif hasattr(model, 'enable_gradient_checkpointing'):
             model.enable_gradient_checkpointing()
 
+    # Step 5.5: Validate disable_adapter() works with FSDP2
+    if (kl_reward > 0 or kl_beta > 0) and hasattr(model, 'disable_adapter'):
+        try:
+            with model.disable_adapter():
+                log_on_main_process(logger, "disable_adapter() context manager works under FSDP2.")
+        except Exception as e:
+            log_on_main_process(logger, f"WARNING: disable_adapter() failed under FSDP2: {e}")
+            log_on_main_process(logger, "KL computation may not work correctly. Consider using a separate ref_model.")
+
     # Step 6: EMA (FSDP-aware EMA, same as train_osp_RL.py)
     log_on_main_process(logger, "Initializing EMA model...")
     ema_model = EMAModel(model, decay=ema_decay, update_interval=ema_update_interval)
-    log_on_main_process(logger, f"EMA model initialized, memory: {get_memory_allocated()} GiB")
+    _lora_ema_keys = {n for n, _ in model.named_parameters() if 'lora_' in n}
+    _orig_ema_update = ema_model.update
+
+    @torch.no_grad()
+    def _lora_only_ema_update(model, step):
+        if step % ema_model.update_interval != 0:
+            return
+        for name, param in model.named_parameters():
+            shadow_param = ema_model.shadow_params[name]
+            if name in _lora_ema_keys:
+                shadow_param.data.sub_(
+                    ema_model.one_minus_decay * (shadow_param.data.float() - param.data.float())
+                )
+            else:
+                shadow_param.data.copy_(param.data)
+
+    ema_model.update = _lora_only_ema_update
+    log_on_main_process(logger, f"EMA model initialized (LoRA-only update, {len(_lora_ema_keys)} LoRA keys), memory: {get_memory_allocated()} GiB")
 
     # Step 7: Checkpointer
     checkpointer = Checkpointer(folder=output_dir, dcp_api=save_with_dcp_api)
@@ -1356,19 +1387,19 @@ def main(config):
                 torch.cuda.empty_cache()
 
             # Save/eval checkpoint
-            if batch_idx == 0 and epoch % save_interval == 0 and epoch > 0:
-                log_on_main_process(logger, f"Saving checkpoint at epoch {epoch}...")
-                checkpointer.save(model, optimizer, None, epoch)
-                ema_model.store(model)
-                ema_model.ema_copy_to_model(model)
-                checkpointer.save_ema_model(model, epoch)
-                ema_model.restore(model)
-                adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{epoch:09d}")
-                # Also save LoRA-specific checkpoint
-                if hasattr(model, 'save_pretrained'):
-                    save_lora_checkpoint(model, output_dir, epoch)
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
+            # if batch_idx == 0 and epoch % save_interval == 0 and epoch > 0:
+            #     log_on_main_process(logger, f"Saving checkpoint at epoch {epoch}...")
+            #     checkpointer.save(model, optimizer, None, epoch)
+            #     ema_model.store(model)
+            #     ema_model.ema_copy_to_model(model)
+            #     checkpointer.save_ema_model(model, epoch)
+            #     ema_model.restore(model)
+            #     adaptive_grad_clipper.save(output_dir=f"{output_dir}/{checkpoint_prefix}{epoch:09d}")
+            #     # Also save LoRA-specific checkpoint
+            #     if hasattr(model, 'save_pretrained'):
+            #         save_lora_checkpoint(model, output_dir, epoch)
+            #     torch.cuda.synchronize()
+            #     torch.cuda.empty_cache()
 
             # Skip first 2 epochs (collecting group statistics)
             # if epoch < 2:
@@ -1633,7 +1664,7 @@ def main(config):
             model.train()
             # 训练阶段恢复原始 reshard_after_forward 设置
             if reshard_after_forward is not None and not reshard_after_forward:
-                model.set_reshard_after_forward(False, recurse=True)
+                model.set_reshard_after_forward(reshard_after_forward, recurse=True)
 
             # 直接使用采样阶段保存的 log_probs 作为 old policy 基准。
             # 不做 RECOMPUTE：采样阶段的 log_probs 由当时的 LoRA model 生成，
@@ -1753,9 +1784,29 @@ def main(config):
 
                     # Optimizer step
                     if backward_counter % accum_steps_total == 0:
+                        # --- DEBUG: check LoRA gradient before optimizer step ---
+                        if rank == 0 and global_step < 3:
+                            for _dn, _dp in model.named_parameters():
+                                if 'lora_' in _dn:
+                                    _local = _dp.grad._local_tensor if isinstance(_dp.grad, DTensor) else (_dp.grad if _dp.grad is not None else None)
+                                    if _local is not None:
+                                        print(f"[DEBUG grad] {_dn}: grad_norm={_local.norm().item():.8f}, "
+                                              f"param_norm={(_dp._local_tensor if isinstance(_dp, DTensor) else _dp).norm().item():.8f}")
+                                    else:
+                                        print(f"[DEBUG grad] {_dn}: grad is None!")
+                                    break
+                        # --- END DEBUG ---
                         grad_norm = adaptive_grad_clipper.adaptive_clip(model.parameters())
                         optimizer.step()
                         optimizer.zero_grad()
+                        # --- DEBUG: check LoRA param after optimizer step ---
+                        if rank == 0 and global_step < 3:
+                            for _dn, _dp in model.named_parameters():
+                                if 'lora_' in _dn:
+                                    _local = _dp._local_tensor if isinstance(_dp, DTensor) else _dp
+                                    print(f"[DEBUG post-step] {_dn}: param_norm={_local.norm().item():.8f}")
+                                    break
+                        # --- END DEBUG ---
                         ema_model.update(model, global_step + 1)
                         global_step += 1
 
@@ -1854,9 +1905,19 @@ def main(config):
             if reshard_after_forward is not None and not reshard_after_forward:
                 model.set_reshard_after_forward(True, recurse=True)
 
-            # 禁用 CP（与采样阶段一致）
+            # 禁用 CP（与采样阶段一致：仅禁用 Ulysses CP，保留 skiparse_cp）
             if use_global_context_parallel:
-                cp_state.clear()
+                log_on_main_process(logger, "[Eval] keeping skiparse_cp, disabling ulysses CP only")
+                if use_context_parallel:
+                    cp_state.cp_group = None
+                    cp_state.cp_rank = 0
+                    cp_state.cp_size = 1
+                    cp_state.global_cp_group = cp_state.skiparse_cp_group
+                    cp_state.global_cp_rank = cp_state.skiparse_cp_rank
+                    cp_state.global_cp_size = cp_state.skiparse_cp_size
+                    cp_state.full_cp_group = None
+                    cp_state.full_cp_rank = 0
+                    cp_state.full_cp_size = 1
                 _cp_state_module.USE_CONTEXT_PARALLEL = None
                 _cp_state_module.USE_SKIPARSE_CONTEXT_PARALLEL = None
                 _cp_state_module.USE_FULL_BLOCKS_CONTEXT_PARALLEL = None

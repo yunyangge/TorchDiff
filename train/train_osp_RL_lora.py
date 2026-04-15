@@ -466,6 +466,13 @@ def compute_log_prob_for_training(
         text_embeddings,
         start_frame_latents=start_frame_latents,
     )
+    
+    # --- DEBUG: 验证 model forward 输出的类型和梯度状态 ---
+    if torch.distributed.get_rank() == 0 and step_idx == 0:
+        print(f"[DEBUG fwd] noise_pred type={type(noise_pred).__name__}, "
+              f"requires_grad={noise_pred.requires_grad}, "
+              f"is_DTensor={isinstance(noise_pred, DTensor)}")
+    # --- END DEBUG ---
 
     if do_cfg and negative_text_embeddings is not None:
         # uncond forward 不需要梯度（CFG 只用其做方向引导），
@@ -484,9 +491,12 @@ def compute_log_prob_for_training(
         noise_pred = torch.lerp(noise_uncond, noise_pred, guidance_scale)
 
     # 确保 noise_pred 是普通 Tensor（非 DTensor），因为 sde_step_with_logprob
-    # 内部的标量运算不兼容 DTensor
+    # 内部的标量运算不兼容 DTensor。
+    # 注意: DTensor.full_tensor() 在某些环境（如 NPU）下可能不支持 autograd backward，
+    # 导致梯度无法回传到 LoRA 参数。使用 redistribute + _local_tensor 保留梯度图。
     if isinstance(noise_pred, DTensor):
-        noise_pred = noise_pred.full_tensor()
+        from torch.distributed.tensor.placement_types import Replicate
+        noise_pred = noise_pred.redistribute(placements=[Replicate()])._local_tensor
 
     prev_sample, log_prob, prev_sample_mean, std_dev_t, dt = sde_step_with_logprob(
         sigmas_schedule,

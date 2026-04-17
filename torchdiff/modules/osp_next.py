@@ -43,6 +43,34 @@ from .skiparse_func import (
     parallel_skiparse_2d_group_to_single,
 )
 
+from .hif8_linear import HIF8Linear
+from .hif8_attention import hif8_attention_with_mask
+
+class OSPLinear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        quant: str = None,
+        scale_max_forward: float = 15.0,
+        scale_max_backward: float = 224.0,
+    ):
+        if quant == 'hif8':
+            self._linear = HIF8Linear(
+                in_features, out_features, bias=bias,
+                scale_max_forward=scale_max_forward,
+                scale_max_backward=scale_max_backward,
+            )
+        else:
+            self._linear = nn.Linear(in_features, out_features, bias=bias)
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        return super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
+
+    def forward(self, x):
+        return self._linear(x)
+
 T5_CONTEXT_TOKEN_NUMBER = 512
 
 # 用实数rope，npu支持更好

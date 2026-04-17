@@ -197,13 +197,13 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
-    if explicit_prefetching_num_blocks > 0:
-        set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
-
     if not has_loaded_pretrained_model:
         model.to_empty(device=device)
         set_seed(seed, device_specific=False) # for init
         model.reset_parameters() # we should call reset_parameters because we init model at meta device 
+
+    if explicit_prefetching_num_blocks > 0:
+        set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
 
     log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
 

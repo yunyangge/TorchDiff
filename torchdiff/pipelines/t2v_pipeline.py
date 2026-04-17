@@ -3,9 +3,11 @@ import ftfy
 import html
 import re
 
+import torch.distributed as dist
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines import DiffusionPipeline
 from torchdiff.utils.constant import NEGATIVE_PROMOPT
+from torchdiff.distributed.cp_state import cp_state
 
 class T2VInferencePipeline(DiffusionPipeline):
 
@@ -134,6 +136,17 @@ class T2VInferencePipeline(DiffusionPipeline):
         if hasattr(self.scheduler, "init_noise_sigma"):
             # scale the initial noise by the standard deviation required by the scheduler
             latents = latents * self.scheduler.init_noise_sigma
+
+        # 当启用context parallel时，cp组内所有rank必须使用完全相同的初始noise，
+        # 否则各rank在切分后再all-gather会得到错乱结果。
+        # 当前依赖外部传入相同的seed/generator保证一致，这里再做一次broadcast以加固，避免任何上游随机性差异。
+        if (
+            cp_state.is_initialized
+            and cp_state.global_cp_group is not None
+            and cp_state.global_cp_size > 1
+            and dist.is_initialized()
+        ):
+            dist.broadcast(latents, group_src=0, group=cp_state.global_cp_group)
         return latents
 
     def decode_latents(self, latents, value_range=(-1, 1), normalize=True, **kwargs):

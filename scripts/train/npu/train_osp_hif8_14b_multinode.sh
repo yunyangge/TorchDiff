@@ -1,9 +1,12 @@
 echo "start process..."
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
-export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE="offline"
+export WANDB_API_KEY="720d886d8c437c2142c88056a1eab8ef78d64a1f"
+wandb login --relogin $WANDB_API_KEY
+# export ASCEND_RT_VISIBLE_DEVICES=4,5,6,7
 
-export ASCEND_LAUNCH_BLOCKING=1
+export TOKENIZERS_PARALLELISM=false
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
@@ -18,7 +21,7 @@ export HCCL_EXEC_TIMEOUT=0
 export ACL_DEVICE_SYNC_TIMEOUT=3600
 
 # 每个节点的卡数
-NPROC_PER_NODE=${MA_NUM_GPUS:-16}
+NPROC_PER_NODE=${MA_NUM_GPUS:-8}
 
 # 节点总数
 NNODES=${MA_NUM_HOSTS:-1}
@@ -49,5 +52,5 @@ torchrun \
   --node_rank=${NODE_RANK} \
   --master_addr=${MASTER_ADDR} \
   --master_port=${MASTER_PORT} \
-  eval/eval_osp_lora.py \
-  --config configs/eval/npu/osp_14b_rl.yaml
+  train/train_osp.py \
+  --config configs/train/npu/osp_hif8_14b.yaml

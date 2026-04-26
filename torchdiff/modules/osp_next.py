@@ -43,6 +43,27 @@ from .skiparse_func import (
     parallel_skiparse_2d_group_to_single,
 )
 
+from .hif8_linear import HIF8Linear
+from .hif8_attention import hif8_attention_with_mask
+
+def _make_linear(
+    quant: str,
+    in_features: int,
+    out_features: int,
+    scale_max_forward: float = 15.0,
+    scale_max_backward: float = 224.0,
+    bias: bool = True,
+):
+    if quant == "hif8":
+        return HIF8Linear(
+            in_features,
+            out_features,
+            bias=bias,
+            scale_max_forward=scale_max_forward,
+            scale_max_backward=scale_max_backward,
+        )
+    return nn.Linear(in_features, out_features, bias=bias)
+
 T5_CONTEXT_TOKEN_NUMBER = 512
 
 # 用实数rope，npu支持更好
@@ -404,6 +425,10 @@ class ContextParallelPreprocessor(MetaPreprocessor):
         # 尽可能接近正方形，如果无法达到正方形，则让cp_size_w更大（因为一般用横屏视频）
         cp_size_h = cp_size // math.ceil(cp_size ** 0.5)
         cp_size_w = cp_size // cp_size_h
+        assert cp_size_h * cp_size_w == cp_size, (
+            f"Unsupported cp_size={cp_size} for skiparse 2d. "
+            f"Expected cp_size_h * cp_size_w == cp_size, got {cp_size_h} * {cp_size_w}."
+        )
         sub_h = self.sparse_ratio ** 2
         sub_w = self.sparse_ratio ** 2
         num_sub_h = math.ceil(H / sub_h)
@@ -539,7 +564,7 @@ class ContextParallelPreprocessor(MetaPreprocessor):
         
         need_shard = (use_context_parallel() or use_full_blocks_context_parallel()) and cp_size > 1
         if not need_shard:
-            return [[shape[1]]] * 3
+            return [[shape[1]] for _ in range(3)]
 
         key = (shape, grid_sizes, cp_type)
         if self.shard_seq_lens_cache.is_exist(key):
@@ -553,7 +578,7 @@ class ContextParallelPreprocessor(MetaPreprocessor):
         if cp_type is None or cp_type == ContextParallelType.FullBlocksCP:
             full_blocks_shard_seq_lens = get_shard_seq_lens(dummy, cp_state.full_cp_group)
             self.shard_seq_lens_cache.set(key, (full_blocks_shard_seq_lens, None, None))
-            return full_blocks_shard_seq_lens, None, None
+            return [full_blocks_shard_seq_lens for _ in range(3)]
 
         full_shard_seq_lens = get_shard_seq_lens(dummy, cp_state.cp_group)
 
@@ -786,6 +811,11 @@ class OSPNextSelfAttention(nn.Module):
         skiparse_1d=False,
         skiparse_2d=False,
         skiparse_block_type=SkiparseBlockType.Full,
+        # hif8 quantization
+        quant=None,
+        quant_attn=None,
+        scale_max_forward=15.0,
+        scale_max_backward=224.0,
     ):
         assert dim % num_heads == 0
         super().__init__()
@@ -797,12 +827,15 @@ class OSPNextSelfAttention(nn.Module):
         self.eps = eps
         self.skiparse_1d = skiparse_1d
         self.skiparse_2d = skiparse_2d
+        self.quant_attn = quant_attn
+        self.scale_max_forward = scale_max_forward
+        self.scale_max_backward = scale_max_backward
 
         # layers
-        self.q = nn.Linear(dim, dim)
-        self.k = nn.Linear(dim, dim)
-        self.v = nn.Linear(dim, dim)
-        self.o = nn.Linear(dim, dim)
+        self.q = _make_linear(quant, dim, dim, scale_max_forward, scale_max_backward)
+        self.k = _make_linear(quant, dim, dim, scale_max_forward, scale_max_backward)
+        self.v = _make_linear(quant, dim, dim, scale_max_forward, scale_max_backward)
+        self.o = _make_linear(quant, dim, dim, scale_max_forward, scale_max_backward)
         self.norm_q = OSPNextRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
         self.norm_k = OSPNextRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
@@ -898,14 +931,25 @@ class OSPNextSelfAttention(nn.Module):
             k = torch.cat([register_k, k], dim=1)
             v = torch.cat([register_v, v], dim=1)
         
-        x = attention_with_mask(
-            q,
-            k, 
-            v, 
-            # self attn，q/k/v共享mask
-            attn_mask=attn_mask,
-            attn_mask_kv=attn_mask,
-        )
+        if self.quant_attn == "hif8":
+            x = hif8_attention_with_mask(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                attn_mask_kv=attn_mask,
+                scale_max_forward=self.scale_max_forward,
+                scale_max_backward=self.scale_max_backward,
+            )
+        else:
+            x = attention_with_mask(
+                q,
+                k, 
+                v, 
+                # self attn，q/k/v共享mask
+                attn_mask=attn_mask,
+                attn_mask_kv=attn_mask,
+            )
 
         x = self.post_self_attn_all_to_all(x, shard_seq_lens=shard_seq_lens, num_register_tokens=num_register_tokens)
 
@@ -935,7 +979,19 @@ class OSPNextCrossAttention(OSPNextSelfAttention):
         # NOTE cross attn不需要all2all，因为img只作为q，天然支持按序列切分计算
 
         # cross attn，q作为query，k/v作为key/value，k/v没有mask
-        x = attention_with_mask(q, k, v, attn_mask=attn_mask, attn_mask_kv=None, is_cross_attn=True)
+        if self.quant_attn == "hif8":
+            x = hif8_attention_with_mask(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                attn_mask_kv=None,
+                is_cross_attn=True,
+                scale_max_forward=self.scale_max_forward,
+                scale_max_backward=self.scale_max_backward,
+            )
+        else:
+            x = attention_with_mask(q, k, v, attn_mask=attn_mask, attn_mask_kv=None, is_cross_attn=True)
 
         # NOTE cross attn不需要all2all，因为img只作为q，天然支持按序列切分计算
         
@@ -963,6 +1019,11 @@ class OSPNextAttentionBlock(nn.Module):
         skiparse_block_type=SkiparseBlockType.Full,
         is_full2skiparse_block=False,
         is_skiparse2full_block=False,
+        # hif8 quantization
+        quant=None,
+        quant_attn=None,
+        scale_max_forward=15.0,
+        scale_max_backward=224.0,
     ):
         super().__init__()
         self.dim = dim
@@ -981,18 +1042,28 @@ class OSPNextAttentionBlock(nn.Module):
             skiparse_1d=skiparse_1d,
             skiparse_2d=skiparse_2d,
             skiparse_block_type=skiparse_block_type,
+            quant=quant,
+            quant_attn=quant_attn,
+            scale_max_forward=scale_max_forward,
+            scale_max_backward=scale_max_backward,
         )
         self.norm3 = (
             OSPNextLayerNorm(dim, eps, elementwise_affine=True)
             if cross_attn_norm
             else nn.Identity()
         )
-        self.cross_attn = OSPNextCrossAttention(dim, num_heads, (-1, -1), qk_norm, eps)
+        self.cross_attn = OSPNextCrossAttention(
+            dim, num_heads, (-1, -1), qk_norm, eps,
+            quant=quant,
+            quant_attn=quant_attn,
+            scale_max_forward=scale_max_forward,
+            scale_max_backward=scale_max_backward,
+        )
         self.norm2 = OSPNextLayerNorm(dim, eps)
         self.ffn = nn.Sequential(
-            nn.Linear(dim, ffn_dim),
+            _make_linear(quant, dim, ffn_dim, scale_max_forward, scale_max_backward),
             nn.GELU(approximate="tanh"),
-            nn.Linear(ffn_dim, dim),
+            _make_linear(quant, ffn_dim, dim, scale_max_forward, scale_max_backward),
         )
 
         # modulation
@@ -1215,6 +1286,11 @@ class OSPNextModel(ModelMixin, ConfigMixin):
         num_register_tokens=0,
         skiparse_1d=False,
         skiparse_2d=False,
+        # hif8 quantization (None or "hif8")
+        quant=None,
+        quant_attn=None,
+        scale_max_forward=15.0,
+        scale_max_backward=224.0,
         **kwargs,
     ):
 
@@ -1266,8 +1342,14 @@ class OSPNextModel(ModelMixin, ConfigMixin):
             self.num_full_blocks = self.num_layers
             full_block_indices = list(range(0, self.num_layers))
         else:
+            if self.skiparse_1d == self.skiparse_2d:
+                raise ValueError(
+                    "When skiparse_model_type is not 'full', exactly one of skiparse_1d and skiparse_2d must be True."
+                )
             assert self.num_layers % 2 == 0 and self.num_full_blocks % 2 == 0 and self.num_full_blocks <= self.num_layers // 2, "num_full_blocks should be divisible by 2 and less than or equal to num_layers // 2"
-            if self.skiparse_model_type == SkiparseModelType.DualEnd:
+            if self.num_full_blocks == 0:
+                full_block_indices = []
+            elif self.skiparse_model_type == SkiparseModelType.DualEnd:
                 assert self.num_full_blocks % 4 == 0, "num_full_blocks should be divisible by 4"
                 skiparse_start_index = self.num_full_blocks // 2
                 skiparse_end_index = self.num_layers - self.num_full_blocks // 2 - 1
@@ -1312,6 +1394,10 @@ class OSPNextModel(ModelMixin, ConfigMixin):
                     skiparse_block_type=skiparse_block_type,
                     is_full2skiparse_block=is_full2skiparse_block,
                     is_skiparse2full_block=is_skiparse2full_block,
+                    quant=quant,
+                    quant_attn=quant_attn,
+                    scale_max_forward=scale_max_forward,
+                    scale_max_backward=scale_max_backward,
                 )
             )
 
@@ -1410,7 +1496,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
 
         # params
         device = self.patch_embedding.weight.device
-        self.use_full_blocks_context_parallel = use_full_blocks_context_parallel() and self.need_full_blocks_context_parallel
+        use_full_blocks_cp = use_full_blocks_context_parallel() and self.need_full_blocks_context_parallel
 
         # maybe we use meta device for init, so rope freqs should init before forward
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
@@ -1440,7 +1526,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
             patchify_x_shape, grid_sizes, device=device, cp_type=self.main_cp_type
         )
         full_block_full_shard_seq_lens = full_shard_seq_lens
-        if self.use_full_blocks_context_parallel:
+        if use_full_blocks_cp:
             full_block_full_shard_seq_lens, _, _ = self.context_preprocessor.get_shard_seq_lens(
                 patchify_x_shape, grid_sizes, device=device, cp_type=ContextParallelType.FullBlocksCP
             )
@@ -1454,7 +1540,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
         
         x, sub_grid_sizes = self.context_preprocessor.preprocess(
             x, grid_sizes,
-            cp_type=self.main_cp_type if not self.use_full_blocks_context_parallel else ContextParallelType.FullBlocksCP
+            cp_type=self.main_cp_type if not use_full_blocks_cp else ContextParallelType.FullBlocksCP
         )
 
         # text
@@ -1473,7 +1559,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
         for idx, block in enumerate(self.blocks):
             # 如果是full2skiparse block，且采用了full blocks cp
             # 需要先在full blocks cp group中得到完整序列，再重新在cp group中shard
-            if self.use_full_blocks_context_parallel:
+            if use_full_blocks_cp:
                 # 不是第一个block，且从full切换到sparse，则重新切分
                 if idx != 0 and block.is_full2skiparse_block:
                     x = self.context_preprocessor.postprocess(
@@ -1485,7 +1571,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
 
             if block.skiparse_block_type == SkiparseBlockType.Full:
                 attn_mask, cross_attn_mask = None, None
-                shard_seq_lens = full_shard_seq_lens if not self.use_full_blocks_context_parallel else full_block_full_shard_seq_lens
+                shard_seq_lens = full_shard_seq_lens if not use_full_blocks_cp else full_block_full_shard_seq_lens
             elif block.skiparse_block_type == SkiparseBlockType.Single:
                 attn_mask, cross_attn_mask, shard_seq_lens = global_single_mask, local_single_mask, single_shard_seq_lens
             elif block.skiparse_block_type == SkiparseBlockType.Group:
@@ -1507,7 +1593,7 @@ class OSPNextModel(ModelMixin, ConfigMixin):
 
             # 如果是skiparse2full block，且采用了full blocks cp
             # 需要先在cp group中得到完整序列，再重新在full blocks cp group中shard
-            if self.use_full_blocks_context_parallel:
+            if use_full_blocks_cp:
                 # 不是最后一个block，后续还有full blocks，则重新切分
                 if idx != len(self.blocks) - 1 and block.is_skiparse2full_block:
                     x = self.context_preprocessor.postprocess(

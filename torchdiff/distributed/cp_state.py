@@ -5,10 +5,6 @@ from typing import Optional
 from torch.distributed import ProcessGroup
 import torch.distributed as dist
 
-USE_CONTEXT_PARALLEL = None
-USE_SKIPARSE_CONTEXT_PARALLEL = None
-USE_FULL_BLOCKS_CONTEXT_PARALLEL = None
-
 class ContextParallelState:
     global_rank: int = 0
     # 全局cp group，等价于skiparse cp和context cp的并集
@@ -112,19 +108,10 @@ class ContextParallelState:
 cp_state = ContextParallelState()
 
 def use_context_parallel():
-    global USE_CONTEXT_PARALLEL
-    if USE_CONTEXT_PARALLEL is None:
-        USE_CONTEXT_PARALLEL = cp_state.is_initialized and cp_state.cp_size > 1
-    return USE_CONTEXT_PARALLEL
+    return cp_state.is_initialized and cp_state.cp_size > 1
 
 def use_skiparse_context_parallel():
-    global USE_SKIPARSE_CONTEXT_PARALLEL
-    if USE_SKIPARSE_CONTEXT_PARALLEL is None:
-        USE_SKIPARSE_CONTEXT_PARALLEL = cp_state.is_initialized and cp_state.skiparse_cp_size > 1
-    return USE_SKIPARSE_CONTEXT_PARALLEL
+    return cp_state.is_initialized and cp_state.skiparse_cp_size > 1
 
 def use_full_blocks_context_parallel():
-    global USE_FULL_BLOCKS_CONTEXT_PARALLEL
-    if USE_FULL_BLOCKS_CONTEXT_PARALLEL is None:
-        USE_FULL_BLOCKS_CONTEXT_PARALLEL = cp_state.is_initialized and cp_state.full_cp_size > 1
-    return USE_FULL_BLOCKS_CONTEXT_PARALLEL
+    return cp_state.is_initialized and cp_state.full_cp_size > 1

@@ -1,8 +1,8 @@
 import torch
 from torchdiff.modules.osp_next import OSPNextModel
 
-orig_weights_path = 'Wan2.1-T2V-14B/want2v_14b.pt'
-save_path = 'output/osp_next_14b_init'
+orig_weights_path = 'output/hif8/osp_next_14b_81f720p_sparse2d2_ssp4_from_full/iter_000006000/ema_model_state_dict.pt'
+save_path = 'osp_next/hif8_osp_next_14b_81f720p_sparse2d2'
 
 config = {
   'dim': 5120,
@@ -19,6 +19,10 @@ config = {
   'num_register_tokens': 0,
   'skiparse_1d': False,
   'skiparse_2d': True,
+  'quant': "hif8",
+  'quant_attn': "hif8",
+  'scale_max_forward': 15.0,    # forward activation scale clamp (HIF8 max ≈ 15)
+  'scale_max_backward': 224.0  # backward gradient scale clamp  (HIF8 max ≈ 224)
 }
 
 state_dict = torch.load(orig_weights_path, map_location='cpu')

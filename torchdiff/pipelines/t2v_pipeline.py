@@ -6,7 +6,7 @@ import re
 import torch.distributed as dist
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines import DiffusionPipeline
-from torchdiff.utils.constant import NEGATIVE_PROMOPT
+from torchdiff.utils.constant import NEGATIVE_PROMPT
 from torchdiff.distributed.cp_state import cp_state
 
 class T2VInferencePipeline(DiffusionPipeline):
@@ -175,7 +175,7 @@ class T2VInferencePipeline(DiffusionPipeline):
         device="cuda:0",
     ):
         if negative_prompt is None or negative_prompt == "":
-            negative_prompt = NEGATIVE_PROMOPT
+            negative_prompt = NEGATIVE_PROMPT
         
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):

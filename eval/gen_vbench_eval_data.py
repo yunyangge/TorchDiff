@@ -10,7 +10,7 @@ from torchdiff.utils.infer_utils import load_prompts
 
 vbench_eval_data_save_dir = "/home/ma-user/work/gyy/TorchDiff/eval"
 
-prompt_txt = "/home/ma-user/work/gyy/VBench/prompts/augmented_prompts/Wan2.1-T2V-1.3B/all_dimension_aug_wanx_seed42.txt"
+prompt_txt = "/home/ma-user/work/gyy/VBench/prompts/augmented_prompts/gpt_enhanced_prompts/all_dimension_longer.txt"
 short_prompt_txt = "/home/ma-user/work/gyy/VBench/prompts/all_dimension.txt"
 prompts = load_prompts(prompt_txt)
 short_prompts = load_prompts(short_prompt_txt)
@@ -19,9 +19,9 @@ with open(os.path.join(vbench_eval_data_save_dir, 'idx2prompt.txt'), 'w') as f:
     for idx, prompt in enumerate(short_prompts):
         f.write(f"{idx}\t{prompt}\n")
 
-# prompts = [{"cap": item} for item in prompts]
+prompts = [{"cap": item} for item in prompts]
 
-# writer = LMDBWriter()
-# writer.save_filtered_data_samples(prompts, vbench_eval_data_save_dir)
-# test_reader = LMDBReader(vbench_eval_data_save_dir) 
-# print(test_reader.getitem(0))
+writer = LMDBWriter()
+writer.save_filtered_data_samples(prompts, vbench_eval_data_save_dir)
+test_reader = LMDBReader(vbench_eval_data_save_dir) 
+print(test_reader.getitem(0))

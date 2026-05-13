@@ -42,7 +42,7 @@ def main(config):
     seed = config.get("seed", 42)
 
     # model config
-    model_name = config.get("model_name", "wan_t2v")
+    model_name = config.get("model_name", "osp_next")
     model_config = config.get("model_config", {})
     vae_config = config.get("vae_config", {})
     text_encoder_config = config.get("text_encoder_config", {})
@@ -83,15 +83,6 @@ def main(config):
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     device = torch.device(f"cuda:{local_rank}")
     weight_dtype = str_to_precision(weight_dtype)
-
-    # init fsdp config
-    fsdp_size = config.get("fsdp_size", 8)
-    if fsdp_size > world_size: 
-        fsdp_size = world_size
-        log_on_main_process(logger, f"Warning, GPU nums are not enough! FSDP size reset to {fsdp_size}!")
-    ddp_size = config.get("ddp_size", world_size // fsdp_size)
-    ddp_fsdp_mesh = init_device_mesh("cuda", (ddp_size, fsdp_size), mesh_dim_names=("ddp", "fsdp"))
-    logger.info(f"rank {rank} use ddp mesh {ddp_fsdp_mesh['ddp']} and fsdp mesh {ddp_fsdp_mesh['fsdp']}")
 
     # init fsdp config
     fsdp_size = config.get("fsdp_size", 8)
@@ -209,15 +200,15 @@ def main(config):
         cpu_offload=model_cpu_offload,
     )
 
-    log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
-
-    if explicit_prefetching_num_blocks > 0:
-        set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
-
     if not has_loaded_pretrained_model:
         model.to_empty(device=device)
         set_seed(seed, device_specific=False) # for init
         model.reset_parameters() # we should call reset_parameters because we init model at meta device 
+
+    if explicit_prefetching_num_blocks > 0:
+        set_modules_to_forward_prefetch(model.blocks, num_to_forward_prefetch=explicit_prefetching_num_blocks)
+
+    log_on_main_process(logger, f"Diffusion model initialized, memory allocated: {get_memory_allocated()} GiB")
 
     if pretrained_model_dir_or_checkpoint is not None and os.path.isfile(pretrained_model_dir_or_checkpoint):
         log_on_main_process(logger, f"Load model from pretrained_model_checkpoint {pretrained_model_dir_or_checkpoint}")

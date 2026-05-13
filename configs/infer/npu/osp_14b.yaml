@@ -4,10 +4,15 @@ model_name: "osp_next"
 pipeline_name: "t2v"
 seed: 1024
 
+<<<<<<< HEAD
 prompt_txt: "assets/t2v/eval_Moviegen.txt"
 # prompt_txt: "assets/t2v/eval_vbench.txt"
 # output_dir: "samples/osp_next_mixgrpo/vbench_eval/lr805/step100"
 output_dir: "samples/osp_next_mixgrpo/moviegen/lr805/baseline"
+=======
+prompt_txt: "assets/t2v/MovieGenVideoBench_rewritten.txt"
+output_dir: "samples/osp_next_14b_81f720p_sparse2d2_ssp4/iter_000006000_ema"
+>>>>>>> 9800030fc97cead76fe9e2063ab467c9fe276356
 
 num_frames: 81
 height: 720
@@ -20,7 +25,11 @@ cp_size: 2
 skiparse_cp_size: 4
 use_context_parallel: True
 use_skiparse_context_parallel: True
+<<<<<<< HEAD
 reshard_after_forward: True
+=======
+reshard_after_forward: Null
+>>>>>>> 9800030fc97cead76fe9e2063ab467c9fe276356
 explicit_prefetching_num_blocks: 0
 weight_dtype: "bf16"
 save_with_dcp_api: False
@@ -40,7 +49,11 @@ model_config:
   num_register_tokens: 0
   skiparse_1d: False
   skiparse_2d: True
+<<<<<<< HEAD
   pretrained_model_dir_or_checkpoint: "/home/ma-user/work/gyy/TorchDiff/output/osp_next_14b_81f720p_sparse2d2_ssp4/iter_000006000/ema_model_state_dict.pt"
+=======
+  pretrained_model_dir_or_checkpoint: "output/osp_next_14b_81f720p_sparse2d2_ssp4/iter_000006000/ema_model_state_dict.pt"
+>>>>>>> 9800030fc97cead76fe9e2063ab467c9fe276356
 
 scheduler_config:
   scheduler_name: "flow_matching"

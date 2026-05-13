@@ -1,4 +1,4 @@
-pkill -9 -f infer.py
+exportpkill -9 -f infer.py
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 
 export TOKENIZERS_PARALLELISM=false

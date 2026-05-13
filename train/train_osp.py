@@ -306,7 +306,7 @@ def main(config):
         has_loaded_pretrained_model = True
 
     if not has_loaded_pretrained_model:
-        log_on_main_process(f"warning! now we train from scratch, please make sure pretrained_model_dir_or_checkpoint={pretrained_model_dir_or_checkpoint} is correct!")
+        log_on_main_process(logger, f"warning! now we train from scratch, please make sure pretrained_model_dir_or_checkpoint={pretrained_model_dir_or_checkpoint} is correct!")
 
     if training_with_full:
         pretrained_full_model_dir_or_checkpoint = model_config.get("pretrained_full_model_dir_or_checkpoint", None)

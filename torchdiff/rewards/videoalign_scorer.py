@@ -198,7 +198,7 @@ def process_video_folders(main_dir: str, prompt_file: str, scorer: VideoAlignSco
 if __name__ == "__main__":
     # 使用 argparse 以便在命令行中更灵活地传入参数
     parser = argparse.ArgumentParser(description="Process videos and calculate VideoAlign scores.")
-    parser.add_argument("--main_dir", type=str, default="/home/ma-user/work/xianyi/osp_next/TorchDiff/samples/osp_next_mixgrpo/moviegen/lr805", help="Path to the main folder containing subfolders of videos.")
+    parser.add_argument("--main_dir", type=str, default="/home/ma-user/work/xianyi/osp_next/TorchDiff/samples/osp_next_mixgrpo/moviegen/lr104_bf16_2", help="Path to the main folder containing subfolders of videos.")
     parser.add_argument("--prompt_file", type=str, default="/home/ma-user/work/xianyi/osp_next/TorchDiff/assets/t2v/eval_Moviegen.txt", help="Path to the txt file containing prompts.")
     parser.add_argument("--ckpt_path", type=str, default="/home/ma-user/work/xianyi/ckpts/KlingTeam/VideoReward", help="Path to VideoAlign checkpoint.")
     parser.add_argument("--device", type=str, default="npu", help="Device to run on (e.g., cuda, npu).")

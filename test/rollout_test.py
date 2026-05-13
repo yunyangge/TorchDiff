@@ -361,8 +361,8 @@ def test_full_sampling(
 
     # Negative text embeddings for CFG
     # 与推理 pipeline 保持一致：使用真实的 negative prompt 文本而非全零 token
-    from torchdiff.utils.constant import NEGATIVE_PROMOPT
-    neg_prompt_ids, neg_prompt_mask = text_processor(NEGATIVE_PROMOPT)
+    from torchdiff.utils.constant import NEGATIVE_PROMPT
+    neg_prompt_ids, neg_prompt_mask = text_processor(NEGATIVE_PROMPT)
     neg_prompt_ids = neg_prompt_ids.to(device)
     neg_prompt_mask = neg_prompt_mask.to(device)
     with torch.no_grad():

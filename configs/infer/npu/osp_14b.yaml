@@ -4,11 +4,11 @@ model_name: "osp_next"
 pipeline_name: "t2v"
 seed: 1024
 
-
 prompt_txt: "assets/t2v/eval_Moviegen.txt"
 # prompt_txt: "assets/t2v/eval_vbench.txt"
 # output_dir: "samples/osp_next_mixgrpo/vbench_eval/lr805/step100"
 output_dir: "samples/osp_next_mixgrpo/moviegen/lr805/baseline"
+
 
 
 num_frames: 81
@@ -22,11 +22,10 @@ cp_size: 2
 skiparse_cp_size: 4
 use_context_parallel: True
 use_skiparse_context_parallel: True
-
 reshard_after_forward: True
-
-reshard_after_forward: Null
-
+explicit_prefetching_num_blocks: 0
+weight_dtype: "bf16"
+save_with_dcp_api: False
 
 model_config:
   dim: 5120
@@ -45,6 +44,7 @@ model_config:
   skiparse_2d: True
 
   pretrained_model_dir_or_checkpoint: "/home/ma-user/work/gyy/TorchDiff/output/osp_next_14b_81f720p_sparse2d2_ssp4/iter_000006000/ema_model_state_dict.pt"
+
 
 
 scheduler_config:

@@ -15,19 +15,16 @@ Key design:
 
 import os
 import sys
-import copy
 import math
 import yaml
 import time
 import json
 import random
 import tempfile
-import contextlib
 import numpy as np
 from tqdm import tqdm
 from collections import defaultdict
 from concurrent import futures
-from functools import partial
 from argparse import ArgumentParser
 
 import wandb
@@ -75,7 +72,6 @@ from torchdiff.data.utils.wan_utils import WanTextProcessor
 from transformers import AutoTokenizer
 
 from peft import LoraConfig, get_peft_model, PeftModel
-from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
 
 
 def get_ddp_rank_and_fsdp_local_rank(rank, fsdp_size, world_size):
@@ -1304,15 +1300,15 @@ def main(config):
     stat_tracker = PerPromptStatTracker(global_std=global_std) if per_prompt_stat_tracking else None
 
     # Negative text embedding for CFG
-    # 使用真实的 NEGATIVE_PROMOPT 文本（与推理 pipeline 保持一致），而非全零 token
+    # 使用真实的 NEGATIVE_PROMPT 文本（与推理 pipeline 保持一致），而非全零 token
     log_on_main_process(logger, "Computing negative text embedding...")
-    from torchdiff.utils.constant import NEGATIVE_PROMOPT
+    from torchdiff.utils.constant import NEGATIVE_PROMPT
     neg_text_processor = WanTextProcessor(
         tokenizer=AutoTokenizer.from_pretrained(text_tokenizer_path),
         model_max_length=text_max_length,
         return_prompt_mask=True,
     )
-    neg_prompt_ids, neg_prompt_mask = neg_text_processor(NEGATIVE_PROMOPT)
+    neg_prompt_ids, neg_prompt_mask = neg_text_processor(NEGATIVE_PROMPT)
     neg_prompt_ids = neg_prompt_ids.to(device)
     neg_prompt_mask = neg_prompt_mask.to(device)
     with torch.no_grad():

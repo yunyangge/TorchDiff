@@ -4,8 +4,8 @@ model_name: "osp_next"
 pipeline_name: "t2v"
 seed: 666
 
-
 output_dir: "samples/vbench/osp_next_14b_81f720p_sparse2d2_ssp4_seed666"
+
 
 
 num_frames: 81

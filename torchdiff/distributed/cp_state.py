@@ -53,6 +53,7 @@ class ContextParallelState:
         skiparse_cp_group: ProcessGroup = None,
         full_cp_group: ProcessGroup = None,
     ):
+        global USE_CONTEXT_PARALLEL, USE_SKIPARSE_CONTEXT_PARALLEL, USE_FULL_BLOCKS_CONTEXT_PARALLEL
         self.global_rank = dist.get_rank() if dist.is_initialized() else 0
         if global_cp_group is not None:
             self.global_cp_group = global_cp_group
@@ -72,10 +73,14 @@ class ContextParallelState:
             self.full_cp_size = dist.get_world_size(full_cp_group)
         self.is_initialized = True
         self.reset_counts += 1
+        USE_CONTEXT_PARALLEL = None
+        USE_SKIPARSE_CONTEXT_PARALLEL = None
+        USE_FULL_BLOCKS_CONTEXT_PARALLEL = None
         self.log()
 
 
     def clear(self):
+        global USE_CONTEXT_PARALLEL, USE_SKIPARSE_CONTEXT_PARALLEL, USE_FULL_BLOCKS_CONTEXT_PARALLEL
         self.global_rank = 0
         self.global_cp_group = None
         self.global_cp_rank = 0
@@ -90,6 +95,9 @@ class ContextParallelState:
         self.full_cp_rank = 0
         self.full_cp_size = 1
         self.is_initialized = False
+        USE_CONTEXT_PARALLEL = None
+        USE_SKIPARSE_CONTEXT_PARALLEL = None
+        USE_FULL_BLOCKS_CONTEXT_PARALLEL = None
 
     def get_cp_infos_with_type(self, cp_type: Optional[str] = None):
         if cp_type is None:
@@ -114,4 +122,7 @@ def use_skiparse_context_parallel():
     return cp_state.is_initialized and cp_state.skiparse_cp_size > 1
 
 def use_full_blocks_context_parallel():
-    return cp_state.is_initialized and cp_state.full_cp_size > 1
+    global USE_FULL_BLOCKS_CONTEXT_PARALLEL
+    if USE_FULL_BLOCKS_CONTEXT_PARALLEL is None:
+        USE_FULL_BLOCKS_CONTEXT_PARALLEL = cp_state.is_initialized and cp_state.full_cp_size > 1
+    return USE_FULL_BLOCKS_CONTEXT_PARALLEL

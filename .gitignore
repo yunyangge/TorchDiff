@@ -5,6 +5,7 @@
 # *.png
 *.gif
 *.bmp
+*.csv
 *.mp4
 *.mov
 *.mkv
@@ -25,6 +26,7 @@ cache
 __pycache__/
 storage/
 samples/
+sample/
 !.gitignore
 !requirements.txt
 .DS_Store
@@ -41,3 +43,4 @@ vbench*/
 output*/
 extra-info*/
 *.lmdb/
+outcome/

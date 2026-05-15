@@ -9,6 +9,7 @@ tqdm
 imageio
 easydict
 ftfy
+beautifulsoup4
 dashscope
 imageio-ffmpeg
 flash_attn
